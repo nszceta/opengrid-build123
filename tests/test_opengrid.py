@@ -3,13 +3,18 @@ from __future__ import annotations
 import pytest
 
 from opengrid_build123.opengrid import (
+    AdjacentGridConnectorConfig,
     BoardKind,
     ChamferMode,
     FillSpaceMode,
+    ConnectorSlotDeleteToolConfig,
     GridConfig,
     ScrewMounting,
     StackingMethod,
+    build_connector_slot_delete_tool,
+    build_adjacent_grid_connector,
     _connector_z_base,
+    _connector_positions,
     build_open_grid,
 )
 
@@ -93,14 +98,124 @@ def test_corner_chamfers_cut_through_full_tile_height() -> None:
         assert not chamfered.is_inside((-13.0, -13.0, z))
         assert chamfered.is_inside((-9.5, -13.0, z))
 
-def test_connector_slots_are_centered_on_board_side_height() -> None:
-    full_base = _connector_z_base(6.8, BoardKind.FULL)
-    lite_base = _connector_z_base(4.0, BoardKind.LITE)
+def test_connector_slot_delete_tool_matches_reference_envelope() -> None:
+    tool = build_connector_slot_delete_tool()
+    size = tool.bounding_box().size
 
-    assert full_base == pytest.approx((6.8 - 2.4) / 2.0)
-    assert full_base + 2.4 / 2.0 == pytest.approx(6.8 / 2.0)
-    assert lite_base == pytest.approx((4.0 - 2.4) / 2.0)
-    assert lite_base + 2.4 / 2.0 == pytest.approx(4.0 / 2.0)
+    assert (float(size.X), float(size.Y), float(size.Z)) == pytest.approx((5.1, 5.2, 2.4))
+    assert tool.volume < 5.1 * 5.2 * 2.4
+    assert tool.is_inside((0.5, 0.0, 1.2))
+    assert not tool.is_inside((0.1, 2.55, 1.2))
+
+
+def test_adjacent_grid_connector_is_double_sided_and_fits_slot_tool() -> None:
+    slot_config = ConnectorSlotDeleteToolConfig()
+    connector_config = AdjacentGridConnectorConfig(slot_delete_tool=slot_config, fit_clearance=0.1)
+    slot_size = build_connector_slot_delete_tool(slot_config).bounding_box().size
+    connector = build_adjacent_grid_connector(connector_config)
+    connector_size = connector.bounding_box().size
+
+    assert connector_size.X == pytest.approx((float(slot_size.X) - 0.2) * 2.0)
+    assert connector_size.Y < slot_size.Y
+    assert connector_size.Z < slot_size.Z
+    assert connector.volume > build_connector_slot_delete_tool(slot_config).volume
+
+
+def test_adjacent_grid_connector_fit_clearance_changes_envelope() -> None:
+    tight = build_adjacent_grid_connector(AdjacentGridConnectorConfig(fit_clearance=0.0))
+    loose = build_adjacent_grid_connector(AdjacentGridConnectorConfig(fit_clearance=0.2))
+
+    assert loose.bounding_box().size.X < tight.bounding_box().size.X
+    assert loose.bounding_box().size.Y < tight.bounding_box().size.Y
+    assert loose.bounding_box().size.Z < tight.bounding_box().size.Z
+    assert loose.volume < tight.volume
+
+
+def test_connector_slots_are_at_source_z_centers() -> None:
+    centers = {
+        BoardKind.FULL: _connector_z_base(6.8, BoardKind.FULL) + 2.4 / 2.0,
+        BoardKind.LITE: _connector_z_base(4.0, BoardKind.LITE) + 2.4 / 2.0,
+        BoardKind.HEAVY: _connector_z_base(13.8, BoardKind.HEAVY) + 2.4 / 2.0,
+    }
+
+    assert centers[BoardKind.FULL] == pytest.approx(6.8 / 2.0)
+    assert centers[BoardKind.LITE] == pytest.approx(4.0 - 2.4 / 2.0 - 1.0)
+    assert centers[BoardKind.HEAVY] == pytest.approx(13.8 / 2.0)
+
+
+def test_connector_holes_remove_material_without_changing_board_envelope() -> None:
+    base = GridConfig(
+        kind=BoardKind.FULL,
+        board_width=2,
+        board_height=2,
+        chamfers=ChamferMode.NONE,
+        connector_holes=False,
+        screw_mounting=ScrewMounting.NONE,
+    )
+    cut = GridConfig(
+        kind=BoardKind.FULL,
+        board_width=2,
+        board_height=2,
+        chamfers=ChamferMode.NONE,
+        connector_holes=True,
+        screw_mounting=ScrewMounting.NONE,
+    )
+
+    assert _bbox_size(cut) == pytest.approx(_bbox_size(base))
+    assert _volume(cut) < _volume(base)
+
+
+def test_connector_slot_delete_tool_height_config_changes_removed_material() -> None:
+    default_cut = GridConfig(
+        kind=BoardKind.FULL,
+        board_width=2,
+        board_height=2,
+        chamfers=ChamferMode.NONE,
+        connector_holes=True,
+        screw_mounting=ScrewMounting.NONE,
+    )
+    shallow_cut = GridConfig(
+        kind=BoardKind.FULL,
+        board_width=2,
+        board_height=2,
+        chamfers=ChamferMode.NONE,
+        connector_holes=True,
+        connector_slot_delete_tool=ConnectorSlotDeleteToolConfig(height=1.2),
+        screw_mounting=ScrewMounting.NONE,
+    )
+
+    assert _bbox_size(shallow_cut) == pytest.approx(_bbox_size(default_cut))
+    assert _volume(shallow_cut) > _volume(default_cut)
+    assert _connector_z_base(6.8, BoardKind.FULL, 1.2) + 1.2 / 2.0 == pytest.approx(6.8 / 2.0)
+
+
+def test_connector_side_flags_only_cut_requested_side() -> None:
+    config = GridConfig(
+        kind=BoardKind.FULL,
+        board_width=2,
+        board_height=2,
+        chamfers=ChamferMode.NONE,
+        connector_holes=True,
+        connector_holes_right=True,
+        connector_holes_left=False,
+        connector_holes_top=False,
+        connector_holes_bottom=False,
+        screw_mounting=ScrewMounting.NONE,
+    )
+    board = build_open_grid(config)
+
+    assert not board.is_inside((27.5, 0.0, 3.4))
+    assert board.is_inside((-27.5, 0.0, 3.4))
+    assert board.is_inside((0.0, 27.5, 3.4))
+    assert board.is_inside((0.0, -27.5, 3.4))
+
+
+def test_connector_positions_skip_short_board_axes() -> None:
+    one_by_three = GridConfig(board_width=1, board_height=3)
+    three_by_one = GridConfig(board_width=3, board_height=1)
+
+    assert {side for side, _ in _connector_positions(one_by_three)} == {"right", "left"}
+    assert {side for side, _ in _connector_positions(three_by_one)} == {"top", "bottom"}
 
 
 def test_stacked_interface_layers_follow_spacing_formula() -> None:
@@ -137,3 +252,22 @@ def test_complete_tile_fill_places_remainder_tiles() -> None:
     assert size[0] > 4 * 28.0
     assert size[1] > 3 * 28.0
     assert size[2] == pytest.approx(6.8)
+
+
+def test_available_space_fill_uses_best_whole_grid_fit() -> None:
+    config = GridConfig(
+        kind=BoardKind.FULL,
+        fill_space_mode=FillSpaceMode.FILL_AVAILABLE_SPACE,
+        space_width=70.0,
+        space_depth=45.0,
+        max_tile_width=2,
+        max_tile_depth=2,
+        tile_spacing=5.0,
+        chamfers=ChamferMode.NONE,
+        connector_holes=False,
+        screw_mounting=ScrewMounting.NONE,
+    )
+
+    size = _bbox_size(config)
+
+    assert size == pytest.approx((89.0, 56.0, 6.8))

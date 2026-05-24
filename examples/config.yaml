@@ -1,0 +1,78 @@
+# Unified adjacent-grid connector example configuration.
+# This file intentionally lists every option consumed by examples/main.py.
+
+output:
+  # Directory where one STEP file is written per generated object.
+  directory: output/
+
+viewer:
+  # true shows the same generated objects in OCP CAD Viewer after exporting STEP files.
+  show: false
+  # Port used by OCP CAD Viewer. If null, examples/main.py reads OCP_PORT or falls back to 3939.
+  port: null
+  # Display-only translations so the separate objects do not overlap in the viewer.
+  slot_delete_tool_offset: [42.0, 0.0, 0.0]
+  adjacent_connector_offset: [56.0, 0.0, 0.0]
+
+board:
+  # Options: Full, Lite, Heavy.
+  kind: Heavy 
+  board_width: 2
+  board_height: 2
+  # If fill_space_mode is not None, board_width/board_height are ignored by build_open_grid.
+  # Options: None, Complete Tiles Only, Fill Available Space.
+  fill_space_mode: Fill Available Space
+  # Fill Available Space generates multiple boards when the requested space is
+  # larger than max_tile_width/max_tile_depth; tile_spacing is the gap between
+  # those separate boards. For this example, 330x500mm becomes 8x8, 4x8, and
+  # 4x2/8x2 edge boards rather than one monolithic board.
+  space_width: 330.0
+  space_depth: 500.0
+  max_tile_width: 8
+  max_tile_depth: 8
+  tile_spacing: 5.0
+  tile_size: 28.0
+  tile_thickness: 6.8
+  lite_tile_thickness: 4.0
+  heavy_tile_thickness: 13.8
+  heavy_tile_gap: 0.2
+  # Options: Everywhere, Corners, None.
+  chamfers: Everywhere
+  chamfer_top_left: true
+  chamfer_top_right: true
+  chamfer_bottom_left: true
+  chamfer_bottom_right: true
+  connector_holes: true
+  connector_holes_bottom: true
+  connector_holes_right: true
+  connector_holes_left: true
+  connector_holes_top: true
+  # Options: Everywhere, Corners, By Row and Column, Custom, None.
+  screw_mounting: Corners
+  screw_every_x_rows: 1
+  screw_every_x_columns: 2
+  screw_custom_positions: "011110"
+  screw_diameter: 4.1
+  screw_head_diameter: 7.2
+  screw_head_inset: 1.0
+  screw_head_is_countersunk: true
+  screw_head_countersunk_degree: 90.0
+  add_adhesive_base: false
+  adhesive_base_thickness: 0.6
+  stack_count: 1
+  # Options: Interface Layer, Ironing - BETA.
+  stacking_method: Interface Layer
+  interface_thickness: 0.4
+  interface_separation: 0.1
+
+connector_slot_delete_tool:
+  # Negative cutter for adjacent-grid connector side slots.
+  radius: 2.6
+  dimple_radius: 2.7
+  separation: 2.5
+  height: 2.4
+  flare_width: 1.0
+
+adjacent_grid_connector:
+  # Positive connector that locks adjacent openGrid boards together.
+  fit_clearance: 0.1

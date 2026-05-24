@@ -47,25 +47,23 @@ Supported `--kind` values:
 - `Lite`
 - `Heavy`
 
-## View in OCP VS Code
+## Export STEP files and view in OCP VS Code
 
-Open the OCP CAD Viewer panel in VS Code, then run:
+The unified example reads `examples/config.yaml` by default. Edit that file to configure the board, adjacent-grid connector slot delete tool, positive adjacent-grid connector, STEP output directory, and optional OCP viewer display.
 
-```bash
-uv run python examples/view_opengrid.py
-```
-
-If your viewer is on a non-default port:
+Export the configured adjacent-grid connector objects as one STEP file per object:
 
 ```bash
-uv run python examples/view_opengrid.py --port 3939
+uv run python examples/main.py
 ```
 
-or:
+Use another YAML config file with:
 
 ```bash
-OCP_PORT=3939 uv run python examples/view_opengrid.py
+uv run python examples/main.py --config examples/config.yaml
 ```
+
+To display in OCP CAD Viewer, set `viewer.show: true` in the YAML and open the OCP CAD Viewer panel in VS Code before running the script.
 
 ## Python API
 
@@ -109,7 +107,7 @@ src/opengrid_build123/
   __init__.py
   opengrid.py
 examples/
-  view_opengrid.py
+  main.py
 tests/
   test_opengrid.py
 ```

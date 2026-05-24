@@ -815,6 +815,7 @@ source = { editable = "." }
 dependencies = [
     { name = "build123d" },
     { name = "ocp-vscode" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -827,6 +828,7 @@ dev = [
 requires-dist = [
     { name = "build123d", git = "https://github.com/gumyr/build123d" },
     { name = "ocp-vscode", specifier = ">=3.4.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
 [package.metadata.requires-dev]

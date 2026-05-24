@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Iterable, Sequence, TypeAlias, cast
@@ -13,10 +13,14 @@ __all__ = [
     "BoardKind",
     "ChamferMode",
     "FillSpaceMode",
+    "ConnectorSlotDeleteToolConfig",
+    "AdjacentGridConnectorConfig",
     "GridConfig",
     "ScrewMounting",
     "StackingMethod",
     "build_fill_space",
+    "build_connector_slot_delete_tool",
+    "build_adjacent_grid_connector",
     "build_open_grid",
     "export_grid",
     "open_grid",
@@ -45,8 +49,12 @@ _TILE_INNER_SIZE_DIFFERENCE = 3.0
 _INTERSECTION_DISTANCE = 4.2
 _CORNER_SQUARE_THICKNESS = 2.6
 _CONNECTOR_CUTOUT_RADIUS = 2.6
+_CONNECTOR_CUTOUT_DIMPLE_RADIUS = 2.7
+_CONNECTOR_CUTOUT_SEPARATION = 2.5
+_CONNECTOR_CUTOUT_FLARE_WIDTH = 1.0
+_LITE_CONNECTOR_CUTOUT_DISTANCE_FROM_TOP = 1.0
 _CONNECTOR_CUTOUT_HEIGHT = 2.4
-_CONNECTOR_CUTOUT_DEPTH = 5.2
+
 _SCREW_CUSTOM_DEFAULT = "011110"
 
 
@@ -82,6 +90,51 @@ class FillSpaceMode(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class ConnectorSlotDeleteToolConfig:
+    """Configuration for the adjacent-grid connector side slot delete tool."""
+
+    radius: float = _CONNECTOR_CUTOUT_RADIUS
+    dimple_radius: float = _CONNECTOR_CUTOUT_DIMPLE_RADIUS
+    separation: float = _CONNECTOR_CUTOUT_SEPARATION
+    height: float = _CONNECTOR_CUTOUT_HEIGHT
+    flare_width: float = _CONNECTOR_CUTOUT_FLARE_WIDTH
+
+    def validate(self) -> None:
+        if min(
+            self.radius,
+            self.dimple_radius,
+            self.separation,
+            self.height,
+            self.flare_width,
+        ) <= 0.0:
+            raise ValueError("connector slot delete tool dimensions must be positive")
+        if self.separation * 3.0 <= self.dimple_radius:
+            raise ValueError("connector slot delete tool separation is too small for the insertion flare")
+
+
+@dataclass(frozen=True, slots=True)
+class AdjacentGridConnectorConfig:
+    """Configuration for the positive connector joining adjacent openGrid boards."""
+
+    slot_delete_tool: ConnectorSlotDeleteToolConfig = field(default_factory=ConnectorSlotDeleteToolConfig)
+    fit_clearance: float = 0.1
+
+    def validate(self) -> None:
+        self.slot_delete_tool.validate()
+        min_dimension = min(
+            self.slot_delete_tool.radius,
+            self.slot_delete_tool.height / 2.0,
+            self.slot_delete_tool.flare_width / 2.0,
+        )
+        if self.fit_clearance < 0.0:
+            raise ValueError("adjacent-grid connector fit_clearance must be non-negative")
+        if self.fit_clearance >= min_dimension:
+            raise ValueError("adjacent-grid connector fit_clearance is too large")
+
+
+
+
+@dataclass(frozen=True, slots=True)
 class GridConfig:
     kind: BoardKind = BoardKind.LITE
     board_width: int = 2
@@ -96,6 +149,7 @@ class GridConfig:
     connector_holes_right: bool = True
     connector_holes_left: bool = True
     connector_holes_top: bool = True
+    connector_slot_delete_tool: ConnectorSlotDeleteToolConfig = field(default_factory=ConnectorSlotDeleteToolConfig)
     screw_mounting: ScrewMounting = ScrewMounting.CORNERS
     screw_every_x_rows: int = 1
     screw_every_x_columns: int = 2
@@ -134,6 +188,7 @@ class GridConfig:
             raise ValueError("stack_count must be at least 1")
         if self.max_tile_width < 1 or self.max_tile_depth < 1:
             raise ValueError("max tile dimensions must be positive")
+        self.connector_slot_delete_tool.validate()
 
 
 def open_grid(
@@ -231,6 +286,61 @@ def build_fill_space(config: GridConfig) -> Shape:
     return _single_board(config, config.kind)
 
 
+def build_connector_slot_delete_tool(
+    config: ConnectorSlotDeleteToolConfig = ConnectorSlotDeleteToolConfig(),
+) -> Shape:
+    """Build the adjacent-grid connector side slot delete tool.
+
+    The returned tool has its origin on the board edge, extends inward along
+    +X, is centered on Y, and starts at Z=0. Geometry is translated from
+    QuackWorks `openGrid/openGrid.scad` `connector_cutout_delete_tool`,
+    licensed CC BY-NC-SA 4.0.
+    """
+    config.validate()
+    flare_height = config.separation * 2.0 - (config.dimple_radius - config.separation)
+    with bd.BuildSketch() as profile:
+        with bd.Locations((-config.radius - 0.1, 0.0), (config.radius - 0.1, 0.0)):
+            bd.Circle(config.radius)
+        bd.make_hull()
+        dimple_x = -0.1 + config.radius - config.separation
+        dimple_y = config.radius + config.separation
+        with bd.Locations((dimple_x, -dimple_y), (dimple_x, dimple_y)):
+            bd.Circle(config.dimple_radius, mode=bd.Mode.SUBTRACT)
+        bd.Rectangle(
+            config.flare_width,
+            flare_height,
+            align=(bd.Align.MIN, bd.Align.CENTER),
+        )
+        bd.Rectangle(
+            config.dimple_radius * 4.0,
+            config.dimple_radius * 4.0,
+            align=(bd.Align.MIN, bd.Align.CENTER),
+            mode=bd.Mode.INTERSECT,
+        )
+    return cast(Shape, bd.extrude(profile.sketch, amount=config.height))
+def build_adjacent_grid_connector(
+    config: AdjacentGridConnectorConfig = AdjacentGridConnectorConfig(),
+) -> Shape:
+    """Build the positive adjacent-grid connector that mates with side slots.
+
+    The connector is two opposed slot-mating halves sharing the board seam at
+    X=0. Each half is derived from the adjacent-grid connector slot delete
+    tool and inset by `fit_clearance`, so it fits into slots made with the
+    same `ConnectorSlotDeleteToolConfig`.
+    """
+    config.validate()
+    half = build_connector_slot_delete_tool(config.slot_delete_tool)
+    if config.fit_clearance > 0.0:
+        half = cast(Shape, bd.offset(half, amount=-config.fit_clearance))
+    half_box = half.bounding_box()
+    half = half.translate((-float(half_box.min.X), 0.0, -float(half_box.min.Z)))
+    other_half = half.rotate(bd.Axis.Z, 180.0)
+    return cast(Shape, half + other_half)
+
+
+
+
+
 def export_grid(config: GridConfig, path: str | Path) -> None:
     bd.export_stl(build_open_grid(config), str(path))
 
@@ -272,7 +382,7 @@ def _board_lattice(config: GridConfig, kind: BoardKind) -> Shape:
     for ix in range(config.board_width):
         for iy in range(config.board_height):
             pieces.append(tile.translate((x0 + ix * config.tile_size, y0 + iy * config.tile_size, 0.0)))
-    return _fuse(pieces)
+    return _compound(pieces)
 
 
 ProfileLayer: TypeAlias = tuple[float, float, float]
@@ -587,27 +697,77 @@ def _edge_slot_offsets(count: int, tile_size: float) -> tuple[float, ...]:
 
 def _connector_tool(config: GridConfig, thickness: float, kind: BoardKind, position: tuple[str, float]) -> Shape:
     side, offset = position
-    z_base = _connector_z_base(thickness, kind)
+    z_base = _connector_z_base(thickness, kind, config.connector_slot_delete_tool.height)
     width = config.board_width * config.tile_size
     height = config.board_height * config.tile_size
-    if side in {"right", "left"}:
-        return _connector_box(config, z_base, side == "right", True, width / 2.0, offset)
-    return _connector_box(config, z_base, side == "top", False, height / 2.0, offset)
+    if side == "right":
+        return _right_connector_slot_delete_tool(config, width / 2.0, offset, z_base)
+    if side == "left":
+        return _left_connector_slot_delete_tool(config, width / 2.0, offset, z_base)
+    if side == "top":
+        return _top_connector_slot_delete_tool(config, height / 2.0, offset, z_base)
+    return _bottom_connector_slot_delete_tool(config, height / 2.0, offset, z_base)
 
 
-def _connector_z_base(thickness: float, kind: BoardKind) -> float:
-    del kind
-    return max(0.0, (thickness - _CONNECTOR_CUTOUT_HEIGHT) / 2.0)
+def _connector_z_base(
+    thickness: float,
+    kind: BoardKind,
+    cutout_height: float = _CONNECTOR_CUTOUT_HEIGHT,
+) -> float:
+    if kind is BoardKind.LITE:
+        return max(
+            0.0,
+            thickness - cutout_height - _LITE_CONNECTOR_CUTOUT_DISTANCE_FROM_TOP,
+        )
+    return max(0.0, (thickness - cutout_height) / 2.0)
 
 
-def _connector_box(config: GridConfig, z_base: float, positive: bool, vertical_side: bool, edge: float, offset: float) -> Shape:
-    depth = _CONNECTOR_CUTOUT_DEPTH
-    width = _CONNECTOR_CUTOUT_RADIUS * 2.0
-    if vertical_side:
-        center_x = (edge - depth / 2.0) if positive else (-edge + depth / 2.0)
-        return bd.Box(depth + 2.0 * _EPSILON, width, _CONNECTOR_CUTOUT_HEIGHT).translate((center_x, offset, z_base + _CONNECTOR_CUTOUT_HEIGHT / 2.0))
-    center_y = (edge - depth / 2.0) if positive else (-edge + depth / 2.0)
-    return bd.Box(width, depth + 2.0 * _EPSILON, _CONNECTOR_CUTOUT_HEIGHT).translate((offset, center_y, z_base + _CONNECTOR_CUTOUT_HEIGHT / 2.0))
+def _right_connector_slot_delete_tool(
+    config: GridConfig,
+    edge: float,
+    offset: float,
+    z_base: float,
+) -> Shape:
+    return _configured_connector_slot_delete_tool(config).rotate(bd.Axis.Z, 180.0).translate(
+        (edge + _EPSILON, offset, z_base)
+    )
+
+
+def _left_connector_slot_delete_tool(
+    config: GridConfig,
+    edge: float,
+    offset: float,
+    z_base: float,
+) -> Shape:
+    return _configured_connector_slot_delete_tool(config).translate(
+        (-edge - _EPSILON, offset, z_base)
+    )
+
+
+def _top_connector_slot_delete_tool(
+    config: GridConfig,
+    edge: float,
+    offset: float,
+    z_base: float,
+) -> Shape:
+    return _configured_connector_slot_delete_tool(config).rotate(bd.Axis.Z, -90.0).translate(
+        (offset, edge + _EPSILON, z_base)
+    )
+
+
+def _bottom_connector_slot_delete_tool(
+    config: GridConfig,
+    edge: float,
+    offset: float,
+    z_base: float,
+) -> Shape:
+    return _configured_connector_slot_delete_tool(config).rotate(bd.Axis.Z, 90.0).translate(
+        (offset, -edge - _EPSILON, z_base)
+    )
+
+
+def _configured_connector_slot_delete_tool(config: GridConfig) -> Shape:
+    return build_connector_slot_delete_tool(config.connector_slot_delete_tool)
 
 
 def _adhesive_base(config: GridConfig) -> Shape:
@@ -669,7 +829,7 @@ def _place_complete_tiles(config: GridConfig, max_wide: int, max_deep: int, rem_
         for y in range(max_deep):
             pieces.append(_placed_tile(config, x * config.max_tile_width, y * config.max_tile_depth, config.max_tile_width, config.max_tile_depth))
     _append_remainder_tiles(pieces, config, max_wide, max_deep, rem_width, rem_depth)
-    return _fuse(pieces)
+    return _compound(pieces)
 
 
 def _append_remainder_tiles(pieces: list[Shape], config: GridConfig, max_wide: int, max_deep: int, rem_width: int, rem_depth: int) -> None:
@@ -690,26 +850,55 @@ def _placed_tile(config: GridConfig, x_cells: int, y_cells: int, width: int, hei
 
 
 def _fill_available_space(config: GridConfig) -> Shape:
-    full_w = config.max_tile_width * config.tile_size
-    full_d = config.max_tile_depth * config.tile_size
-    cols = math.floor(config.space_width / full_w) + (1 if config.space_width % full_w > 0 else 0)
-    rows = math.floor(config.space_depth / full_d) + (1 if config.space_depth % full_d > 0 else 0)
-    pieces = [_clipped_tile(config, col, row, full_w, full_d) for col in range(cols) for row in range(rows)]
-    return _fuse(pieces)
+    width_cells = math.ceil(config.space_width / config.tile_size)
+    depth_cells = math.ceil(config.space_depth / config.tile_size)
+    tile_widths = _tile_runs(width_cells, config.max_tile_width)
+    tile_depths = _tile_runs(depth_cells, config.max_tile_depth)
+    return _place_partitioned_tiles(config, tile_widths, tile_depths)
 
 
-def _clipped_tile(config: GridConfig, col: int, row: int, full_w: float, full_d: float) -> Shape:
-    tile_config = replace(config, board_width=config.max_tile_width, board_height=config.max_tile_depth, fill_space_mode=FillSpaceMode.NONE)
-    x_base = col * (full_w + config.tile_spacing)
-    y_base = row * (full_d + config.tile_spacing)
-    tile = _single_board(tile_config, config.kind).translate((x_base + full_w / 2.0, y_base + full_d / 2.0, 0.0))
-    clip = bd.Box(
-        config.space_width + max(0, col) * config.tile_spacing,
-        config.space_depth + max(0, row) * config.tile_spacing,
-        config.heavy_tile_thickness + 1.0,
-    ).translate(((config.space_width + col * config.tile_spacing) / 2.0, (config.space_depth + row * config.tile_spacing) / 2.0, (config.heavy_tile_thickness + 1.0) / 2.0))
-    return cast(Shape, tile & clip)
+def _tile_runs(total_cells: int, max_cells: int) -> tuple[int, ...]:
+    full_count, remainder = divmod(total_cells, max_cells)
+    full_runs = (max_cells,) * full_count
+    if remainder == 0:
+        return full_runs
+    return (*full_runs, remainder)
 
+
+def _place_partitioned_tiles(config: GridConfig, tile_widths: Sequence[int], tile_depths: Sequence[int]) -> Shape:
+    base_tiles: dict[tuple[int, int], Shape] = {}
+    pieces: list[Shape] = []
+    x = 0.0
+    for width in tile_widths:
+        y = 0.0
+        for depth in tile_depths:
+            pieces.append(
+                _partitioned_tile(config, width, depth, base_tiles).translate(
+                    (x + width * config.tile_size / 2.0, y + depth * config.tile_size / 2.0, 0.0)
+                )
+            )
+            y += depth * config.tile_size + config.tile_spacing
+        x += width * config.tile_size + config.tile_spacing
+    return _compound(pieces)
+
+
+def _partitioned_tile(
+    config: GridConfig,
+    width_cells: int,
+    height_cells: int,
+    base_tiles: dict[tuple[int, int], Shape],
+) -> Shape:
+    key = (width_cells, height_cells)
+    if key not in base_tiles:
+        tile_config = replace(config, board_width=width_cells, board_height=height_cells, fill_space_mode=FillSpaceMode.NONE)
+        base_tiles[key] = _single_board(tile_config, config.kind)
+    return base_tiles[key]
+
+
+def _compound(shapes: Sequence[Shape]) -> Shape:
+    if not shapes:
+        return bd.Part()
+    return cast(Shape, bd.Compound(children=shapes))
 
 def _fuse(shapes: Sequence[Shape]) -> Shape:
     if not shapes:
