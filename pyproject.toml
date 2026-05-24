@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "opengrid-build123"
+version = "0.1.0"
+description = "build123d conversion of the parametric openGrid generator"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "build123d",
+    "ocp-vscode>=3.4.0",
+]
+
+[project.scripts]
+opengrid-build123 = "opengrid_build123.opengrid:main"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.5",
+    "pytest>=9.0.3",
+]
+
+[tool.uv.sources]
+build123d = { git = "https://github.com/gumyr/build123d" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.basedpyright]
+pythonVersion = "3.14"
+typeCheckingMode = "standard"
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportMissingTypeStubs = false
