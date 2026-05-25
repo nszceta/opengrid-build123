@@ -16,11 +16,23 @@ from opengrid_build123 import (
     ChamferMode,
     ConnectorSlotDeleteToolConfig,
     FillSpaceMode,
+    MulticonnectConfig,
+    MulticonnectPartKind,
+    MulticonnectProfile,
+    MulticonnectRounding,
+    SnapThreadConfig,
     GridConfig,
     ScrewMounting,
     StackingMethod,
+    ThreadType,
+    build_multiconnect_profile,
+    build_multiconnect_backer,
+    build_multiconnect_delete_tool,
+    build_multiconnect_rail,
+    build_multiconnect_receiver,
     build_adjacent_grid_connector,
     build_connector_slot_delete_tool,
+    build_snap_threads,
     build_open_grid,
 )
 
@@ -121,6 +133,12 @@ def _output_dir(config: dict[str, Any]) -> Path:
     return Path(_as_str(output, "directory"))
 
 
+def _verification_dir(config: dict[str, Any]) -> Path:
+    return _output_dir(config) / "verification"
+
+
+
+
 def _slot_delete_tool_config(config: dict[str, Any]) -> ConnectorSlotDeleteToolConfig:
     slot = _section(config, "connector_slot_delete_tool")
     return ConnectorSlotDeleteToolConfig(
@@ -137,6 +155,48 @@ def _adjacent_connector_config(config: dict[str, Any]) -> AdjacentGridConnectorC
     return AdjacentGridConnectorConfig(
         slot_delete_tool=_slot_delete_tool_config(config),
         fit_clearance=_as_float(connector, "fit_clearance"),
+    )
+
+
+def _multiconnect_config(config: dict[str, Any]) -> MulticonnectConfig:
+    multiconnect = _section(config, "multiconnect")
+    return MulticonnectConfig(
+        profile=MulticonnectProfile(_as_str(multiconnect, "profile")),
+        part_kind=MulticonnectPartKind(_as_str(multiconnect, "part_kind")),
+        length=_as_float(multiconnect, "length"),
+        width=_as_float(multiconnect, "width"),
+        grid_size=_as_float(multiconnect, "grid_size"),
+        radius=_as_float(multiconnect, "radius"),
+        capture_depth=_as_float(multiconnect, "capture_depth"),
+        dovetail_depth=_as_float(multiconnect, "dovetail_depth"),
+        stem_depth=_as_float(multiconnect, "stem_depth"),
+        receiver_offset=_as_float(multiconnect, "receiver_offset"),
+        dimple_radius=_as_float(multiconnect, "dimple_radius"),
+        dimples_enabled=_as_bool(multiconnect, "dimples_enabled"),
+        dimple_scale=_as_float(multiconnect, "dimple_scale"),
+        rounding=MulticonnectRounding(_as_str(multiconnect, "rounding")),
+        receiver_side_wall_thickness=_as_float(multiconnect, "receiver_side_wall_thickness"),
+        receiver_back_thickness=_as_float(multiconnect, "receiver_back_thickness"),
+        receiver_top_wall_thickness=_as_float(multiconnect, "receiver_top_wall_thickness"),
+        on_ramps_enabled=_as_bool(multiconnect, "on_ramps_enabled"),
+        on_ramp_every_n_holes=_as_int(multiconnect, "on_ramp_every_n_holes"),
+        on_ramp_start_offset=_as_int(multiconnect, "on_ramp_start_offset"),
+    )
+
+
+def _snap_thread_config(config: dict[str, Any]) -> SnapThreadConfig:
+    snap_threads = _section(config, "snap_threads")
+    return SnapThreadConfig(
+        thread_type=ThreadType(_as_str(snap_threads, "thread_type")),
+        height=_as_float(snap_threads, "height"),
+        diameter=_as_float(snap_threads, "diameter"),
+        clearance=_as_float(snap_threads, "clearance"),
+        pitch=_as_float(snap_threads, "pitch"),
+        top_bevel=_as_float(snap_threads, "top_bevel"),
+        bottom_bevel_standard=_as_float(snap_threads, "bottom_bevel_standard"),
+        bottom_bevel_lite=_as_float(snap_threads, "bottom_bevel_lite"),
+        offset_angle=_as_float(snap_threads, "offset_angle"),
+        blunt_cutoff=_as_bool(snap_threads, "blunt_cutoff"),
     )
 
 
@@ -186,10 +246,16 @@ def _grid_config(config: dict[str, Any], slot_delete_tool: ConnectorSlotDeleteTo
     )
 
 
+
 def _show_objects(
     grid: object,
     slot_delete_tool: _DisplayShape,
     adjacent_connector: _DisplayShape,
+    multiconnect_rail: _DisplayShape,
+    multiconnect_receiver: _DisplayShape,
+    multiconnect_backer: _DisplayShape,
+    multiconnect_delete_tool: _DisplayShape,
+    snap_threads: _DisplayShape,
     viewer: dict[str, Any],
 ) -> None:
     port = _as_optional_port(viewer, "port")
@@ -203,10 +269,20 @@ def _show_objects(
         grid,
         slot_delete_tool.translate(_as_vector(viewer, "slot_delete_tool_offset")),
         adjacent_connector.translate(_as_vector(viewer, "adjacent_connector_offset")),
+        multiconnect_rail.translate(_as_vector(viewer, "multiconnect_rail_offset")),
+        multiconnect_receiver.translate(_as_vector(viewer, "multiconnect_receiver_offset")),
+        multiconnect_backer.translate(_as_vector(viewer, "multiconnect_backer_offset")),
+        multiconnect_delete_tool.translate(_as_vector(viewer, "multiconnect_delete_tool_offset")),
+        snap_threads.translate(_as_vector(viewer, "snap_threads_offset")),
         names=[
             "openGrid board with adjacent-grid connector slots",
             "adjacent-grid connector slot delete tool",
             "adjacent-grid connector",
+            "Multiconnect rail",
+            "Multiconnect receiver",
+            "Multiconnect backer",
+            "Multiconnect delete tool",
+            "snap threads",
         ],
         port=port,
         reset_camera=Camera.CENTER,
@@ -215,15 +291,72 @@ def _show_objects(
     )
 
 
+def _export_svg_projection(
+    shape: _DisplayShape,
+    path: Path,
+    viewport_origin: tuple[float, float, float],
+    viewport_up: tuple[float, float, float] = (0.0, 0.0, 1.0),
+) -> None:
+    visible, hidden = cast(Any, shape).project_to_viewport(viewport_origin, viewport_up=viewport_up)
+    exporter = bd.ExportSVG(scale=8.0, margin=2.0)
+    exporter.add_layer("visible", line_color=bd.Color("black"), line_weight=0.08)
+    exporter.add_layer("hidden", line_color=bd.Color("lightgray"), line_weight=0.04, line_type=bd.LineType.HIDDEN)
+    exporter.add_shape(hidden, layer="hidden")
+    exporter.add_shape(visible, layer="visible")
+    exporter.write(path)
+
+
+def _export_snap_thread_verification(snap_threads: _DisplayShape, verification_dir: Path) -> tuple[Path, ...]:
+    verification_dir.mkdir(parents=True, exist_ok=True)
+    views = (
+        ("snap_threads_iso.svg", (28.0, -36.0, 24.0), (0.0, 0.0, 1.0)),
+        ("snap_threads_front.svg", (0.0, -48.0, 3.4), (0.0, 0.0, 1.0)),
+        ("snap_threads_top.svg", (0.0, 0.0, 48.0), (0.0, 1.0, 0.0)),
+    )
+    paths: list[Path] = []
+    for filename, origin, up in views:
+        path = verification_dir / filename
+        _export_svg_projection(snap_threads, path, origin, up)
+        paths.append(path)
+    gallery_path = verification_dir / "snap_threads_gallery.html"
+    _write_snap_thread_gallery(paths, gallery_path)
+    return (*paths, gallery_path)
+
+
+def _write_snap_thread_gallery(svg_paths: list[Path], gallery_path: Path) -> None:
+    figures = "\n".join(
+        f'<figure><figcaption>{path.name}</figcaption><img src="{path.name}" alt="{path.name}"></figure>'
+        for path in svg_paths
+    )
+    gallery_path.write_text(
+        "<!doctype html>\n"
+        '<html lang="en">\n'
+        "<head><meta charset=\"utf-8\"><title>snap threads verification</title>"
+        "<style>body{font-family:sans-serif}main{display:flex;gap:1rem;flex-wrap:wrap}"
+        "figure{margin:0}img{max-width:28rem;border:1px solid #ccc}</style></head>\n"
+        f"<body><h1>snap threads verification</h1><main>{figures}</main></body></html>\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     args = _parse_args()
     config = _load_config(args.config)
     output_dir = _output_dir(config)
     output_dir.mkdir(parents=True, exist_ok=True)
+    verification_dir = _verification_dir(config)
 
     adjacent_connector_config = _adjacent_connector_config(config)
     slot_delete_tool_config = adjacent_connector_config.slot_delete_tool
     board_config = _grid_config(config, slot_delete_tool_config)
+    multiconnect_config = _multiconnect_config(config)
+    snap_thread_config = _snap_thread_config(config)
+    multiconnect_profile = build_multiconnect_profile(multiconnect_config)
+    multiconnect_rail = build_multiconnect_rail(multiconnect_config)
+    multiconnect_receiver = build_multiconnect_receiver(multiconnect_config)
+    multiconnect_backer = build_multiconnect_backer(multiconnect_config)
+    multiconnect_delete_tool = build_multiconnect_delete_tool(multiconnect_config)
+    snap_threads = build_snap_threads(snap_thread_config)
     grid = build_open_grid(board_config)
     slot_delete_tool = build_connector_slot_delete_tool(slot_delete_tool_config)
     adjacent_connector = build_adjacent_grid_connector(adjacent_connector_config)
@@ -231,18 +364,53 @@ def main() -> None:
     grid_path = output_dir / "opengrid_board.step"
     slot_delete_tool_path = output_dir / "adjacent_grid_connector_slot_delete_tool.step"
     adjacent_connector_path = output_dir / "adjacent_grid_connector.step"
+    multiconnect_rail_path = output_dir / "multiconnect_rail.step"
+    multiconnect_receiver_path = output_dir / "multiconnect_receiver.step"
+    multiconnect_backer_path = output_dir / "multiconnect_backer.step"
+    multiconnect_delete_tool_path = output_dir / "multiconnect_delete_tool.step"
+    snap_threads_path = output_dir / "snap_threads.step"
     bd.export_step(grid, grid_path)
     bd.export_step(slot_delete_tool, slot_delete_tool_path)
     bd.export_step(adjacent_connector, adjacent_connector_path)
+    bd.export_step(multiconnect_rail, multiconnect_rail_path)
+    bd.export_step(multiconnect_receiver, multiconnect_receiver_path)
+    bd.export_step(multiconnect_backer, multiconnect_backer_path)
+    bd.export_step(multiconnect_delete_tool, multiconnect_delete_tool_path)
+    bd.export_step(snap_threads, snap_threads_path)
+    snap_thread_verification_paths = _export_snap_thread_verification(snap_threads, verification_dir)
 
     viewer = _section(config, "viewer")
     if _as_bool(viewer, "show"):
-        _show_objects(grid, slot_delete_tool, adjacent_connector, viewer)
+        _show_objects(
+            grid,
+            slot_delete_tool,
+            adjacent_connector,
+            multiconnect_rail,
+            multiconnect_receiver,
+            multiconnect_backer,
+            multiconnect_delete_tool,
+            snap_threads,
+            viewer,
+        )
 
+    output_paths = (
+        grid_path,
+        slot_delete_tool_path,
+        adjacent_connector_path,
+        multiconnect_rail_path,
+        multiconnect_receiver_path,
+        multiconnect_backer_path,
+        multiconnect_delete_tool_path,
+        snap_threads_path,
+        *snap_thread_verification_paths,
+    )
     print(
-        f"{grid_path}\n{slot_delete_tool_path}\n{adjacent_connector_path}"
-        f"\nboard={board_config!r}"
-        f"\nadjacent_connector={adjacent_connector_config!r}"
+        "\n".join(str(path) for path in output_paths)
+        + f"\nboard={board_config!r}"
+        + f"\nadjacent_connector={adjacent_connector_config!r}"
+        + f"\nmulticonnect={multiconnect_config!r}"
+        + f"\nsnap_threads={snap_thread_config!r}"
+        + f"\nmulticonnect_profile={multiconnect_profile!r}"
     )
 
 

@@ -1,4 +1,9 @@
 from __future__ import annotations
+from dataclasses import fields as dataclass_fields
+from pathlib import Path
+import math
+import yaml
+from typing import Any
 
 import pytest
 
@@ -7,16 +12,34 @@ from opengrid_build123.opengrid import (
     BoardKind,
     ChamferMode,
     FillSpaceMode,
+    MulticonnectConfig,
+    MulticonnectPartKind,
+    MulticonnectProfile,
+    MulticonnectRounding,
+    SnapThreadConfig,
     ConnectorSlotDeleteToolConfig,
     GridConfig,
     ScrewMounting,
     StackingMethod,
+    ThreadType,
     build_connector_slot_delete_tool,
     build_adjacent_grid_connector,
+    build_multiconnect_profile,
+    build_multiconnect_backer,
+    build_multiconnect_delete_tool,
+    build_multiconnect_rail,
+    build_multiconnect_receiver,
+    build_snap_threads,
     _connector_z_base,
     _connector_positions,
     build_open_grid,
+    _OG_SNAP_THREADS_PROFILE,
+    _scaled_snap_thread_profile,
+    _snap_thread_radial_offset,
+    _snap_thread_angles,
 )
+
+_EXAMPLE_CONFIG_PATH = Path(__file__).resolve().parents[1] / "examples" / "config.yaml"
 
 
 def _bbox_size(config: GridConfig) -> tuple[float, float, float]:
@@ -26,6 +49,175 @@ def _bbox_size(config: GridConfig) -> tuple[float, float, float]:
 
 def _volume(config: GridConfig) -> float:
     return float(build_open_grid(config).volume)
+
+
+def _snap_thread_bbox_size(config: SnapThreadConfig) -> tuple[float, float, float]:
+    size = build_snap_threads(config).bounding_box().size
+    return (float(size.X), float(size.Y), float(size.Z))
+
+
+def _snap_thread_volume(config: SnapThreadConfig) -> float:
+    return float(build_snap_threads(config).volume)
+
+
+def _example_config() -> dict[str, object]:
+    with _EXAMPLE_CONFIG_PATH.open("r", encoding="utf-8") as config_file:
+        loaded = yaml.safe_load(config_file)
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def _mapping_section(config: dict[str, object], name: str) -> dict[str, object]:
+    section = config[name]
+    assert isinstance(section, dict)
+    return section
+
+
+def _assert_points_close(actual: tuple[tuple[float, float], ...], expected: tuple[tuple[float, float], ...]) -> None:
+    assert len(actual) == len(expected)
+    for actual_point, expected_point in zip(actual, expected):
+        assert actual_point == pytest.approx(expected_point)
+
+
+def _expected_multiconnect_coords(
+    radius: float,
+    capture_depth: float,
+    dovetail_depth: float,
+    stem_depth: float,
+    offset: float,
+) -> tuple[tuple[float, float], ...]:
+    offset_bevel = math.sin(math.radians(45.0)) * offset * 2.0 if offset else 0.0
+    return (
+        (0.0, 0.0),
+        (radius + offset, 0.0),
+        (radius + offset, capture_depth + offset_bevel),
+        (radius - dovetail_depth + offset, dovetail_depth + capture_depth + offset_bevel),
+        (radius - dovetail_depth + offset, dovetail_depth + capture_depth + stem_depth + offset),
+        (0.0, dovetail_depth + capture_depth + stem_depth + offset),
+    )
+
+
+def test_example_config_exhaustively_lists_config_dataclass_fields() -> None:
+    config = _example_config()
+
+    assert set(_mapping_section(config, "output")) == {"directory"}
+    assert set(_mapping_section(config, "viewer")) == {
+        "show",
+        "port",
+        "slot_delete_tool_offset",
+        "adjacent_connector_offset",
+        "multiconnect_rail_offset",
+        "multiconnect_receiver_offset",
+        "multiconnect_backer_offset",
+        "multiconnect_delete_tool_offset",
+        "snap_threads_offset",
+    }
+
+    expected_board_fields = {field.name for field in dataclass_fields(GridConfig)} - {"connector_slot_delete_tool"}
+    assert set(_mapping_section(config, "board")) == expected_board_fields
+    assert set(_mapping_section(config, "connector_slot_delete_tool")) == {
+        field.name for field in dataclass_fields(ConnectorSlotDeleteToolConfig)
+    }
+    assert set(_mapping_section(config, "adjacent_grid_connector")) == {
+        field.name for field in dataclass_fields(AdjacentGridConnectorConfig)
+    } - {"slot_delete_tool"}
+    assert set(_mapping_section(config, "multiconnect")) == {
+        field.name for field in dataclass_fields(MulticonnectConfig)
+    }
+    assert set(_mapping_section(config, "snap_threads")) == {
+        field.name for field in dataclass_fields(SnapThreadConfig)
+    }
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"height": 0.0},
+        {"diameter": 0.0},
+        {"pitch": 0.0},
+        {"clearance": -0.1},
+        {"top_bevel": -0.1},
+        {"bottom_bevel_standard": -0.1},
+        {"bottom_bevel_lite": -0.1},
+    ],
+)
+def test_snap_thread_config_validation_rejects_invalid_dimensions(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        SnapThreadConfig(**kwargs).validate()
+
+
+def test_snap_thread_source_profile_and_effective_diameter_match_reference() -> None:
+    config = SnapThreadConfig(diameter=16.0, clearance=0.5)
+
+    _assert_points_close(
+        _OG_SNAP_THREADS_PROFILE,
+        (
+            (-1.25 / 3.0, -1.0 / 3.0),
+            (-0.25 / 3.0, 0.0),
+            (0.25 / 3.0, 0.0),
+            (1.25 / 3.0, -1.0 / 3.0),
+        ),
+    )
+    assert config.effective_diameter == pytest.approx(16.5)
+
+
+@pytest.mark.parametrize(
+    ("height", "expected_xy"),
+    [
+        (6.8, (16.5, 16.5)),
+        (4.0, (16.5, 16.5)),
+        (3.4, (16.5, 16.2714285714)),
+    ],
+)
+def test_snap_thread_envelopes_match_source_heights(height: float, expected_xy: tuple[float, float]) -> None:
+    assert _snap_thread_bbox_size(SnapThreadConfig(height=height)) == pytest.approx(
+        (*expected_xy, height),
+        abs=0.02,
+    )
+
+
+def test_snap_thread_variants_share_envelope_but_not_volume() -> None:
+    basic = SnapThreadConfig(thread_type=ThreadType.BASIC)
+    blunt = SnapThreadConfig(thread_type=ThreadType.BLUNT)
+
+    assert _snap_thread_bbox_size(basic) == pytest.approx(_snap_thread_bbox_size(blunt), abs=0.02)
+    assert _snap_thread_volume(basic) != pytest.approx(_snap_thread_volume(blunt))
+
+
+def test_snap_thread_clearance_changes_diameter_and_volume() -> None:
+    tight = SnapThreadConfig(clearance=0.0)
+    loose = SnapThreadConfig(clearance=0.5)
+
+    assert _snap_thread_bbox_size(tight)[:2] == pytest.approx((16.0, 16.0), abs=0.02)
+    assert _snap_thread_bbox_size(loose)[:2] == pytest.approx((16.5, 16.5), abs=0.02)
+    assert _snap_thread_volume(loose) > _snap_thread_volume(tight)
+
+
+def test_snap_thread_pitch_changes_geometry_without_changing_nominal_envelope() -> None:
+    fine = SnapThreadConfig(pitch=2.0)
+    coarse = SnapThreadConfig(pitch=3.0)
+
+    assert _snap_thread_bbox_size(fine) == pytest.approx(_snap_thread_bbox_size(coarse), abs=0.02)
+    assert _snap_thread_volume(fine) != pytest.approx(_snap_thread_volume(coarse))
+
+
+def test_snap_thread_profile_has_no_cardinal_axis_spikes() -> None:
+    config = SnapThreadConfig()
+    profile = _scaled_snap_thread_profile(config.pitch)
+    z = config.height / 2.0
+    for angle in (0.0, 90.0, 180.0, 270.0):
+        before = _snap_thread_radial_offset(config, profile, angle - 0.1, z)
+        at_axis = _snap_thread_radial_offset(config, profile, angle, z)
+        after = _snap_thread_radial_offset(config, profile, angle + 0.1, z)
+        assert at_axis == pytest.approx((before + after) / 2.0, abs=0.01)
+
+
+def test_snap_thread_faceting_uses_uniform_angles_without_cardinal_spikes() -> None:
+    angles = _snap_thread_angles(53.5)
+    deltas = [right - left for left, right in zip(angles, angles[1:])]
+
+    assert len(angles) == 144
+    assert deltas == pytest.approx([360.0 / 144.0] * 143)
 
 
 @pytest.mark.parametrize(
@@ -129,6 +321,127 @@ def test_adjacent_grid_connector_fit_clearance_changes_envelope() -> None:
     assert loose.bounding_box().size.Y < tight.bounding_box().size.Y
     assert loose.bounding_box().size.Z < tight.bounding_box().size.Z
     assert loose.volume < tight.volume
+
+
+@pytest.mark.parametrize(
+    ("profile", "radius", "capture_depth", "dovetail_depth", "stem_depth", "receiver_offset"),
+    [
+        (MulticonnectProfile.STANDARD, 10.0, 1.0, 2.5, 0.5, 0.15),
+        (MulticonnectProfile.JR, 5.0, 0.6, 1.2, 0.4, 0.16),
+        (MulticonnectProfile.MINI, 3.2, 1.0, 1.2, 0.4, 0.16),
+        (MulticonnectProfile.MULTIPOINT_BETA, 7.9, 0.4, 2.2, 0.4, 0.15),
+    ],
+)
+def test_multiconnect_profile_presets_match_source_dimensions(
+    profile: MulticonnectProfile,
+    radius: float,
+    capture_depth: float,
+    dovetail_depth: float,
+    stem_depth: float,
+    receiver_offset: float,
+) -> None:
+    male = build_multiconnect_profile(
+        MulticonnectConfig(profile=profile, part_kind=MulticonnectPartKind.CONNECTOR_RAIL)
+    )
+    receiver = build_multiconnect_profile(
+        MulticonnectConfig(profile=profile, part_kind=MulticonnectPartKind.RECEIVER_OPEN_ENDED)
+    )
+
+    _assert_points_close(male, _expected_multiconnect_coords(radius, capture_depth, dovetail_depth, stem_depth, 0.0))
+    _assert_points_close(
+        receiver,
+        _expected_multiconnect_coords(radius, capture_depth, dovetail_depth, stem_depth, receiver_offset),
+    )
+
+
+@pytest.mark.parametrize(
+    "part_kind",
+    [
+        MulticonnectPartKind.CONNECTOR_ROUND,
+        MulticonnectPartKind.CONNECTOR_RAIL,
+        MulticonnectPartKind.CONNECTOR_DOUBLE_SIDED_ROUND,
+        MulticonnectPartKind.CONNECTOR_DOUBLE_SIDED_RAIL,
+    ],
+)
+def test_multiconnect_male_part_profiles_do_not_apply_receiver_offset(part_kind: MulticonnectPartKind) -> None:
+    assert build_multiconnect_profile(MulticonnectConfig(part_kind=part_kind)) == build_multiconnect_profile(
+        MulticonnectConfig(part_kind=MulticonnectPartKind.CONNECTOR_RAIL)
+    )
+
+
+@pytest.mark.parametrize(
+    "part_kind",
+    [
+        MulticonnectPartKind.CONNECTOR_RAIL_DELETE_TOOL,
+        MulticonnectPartKind.RECEIVER_OPEN_ENDED,
+        MulticonnectPartKind.RECEIVER_PASSTHROUGH,
+        MulticonnectPartKind.BACKER_OPEN_ENDED,
+        MulticonnectPartKind.BACKER_PASSTHROUGH,
+    ],
+)
+def test_multiconnect_receiver_delete_and_backer_profiles_apply_offset(part_kind: MulticonnectPartKind) -> None:
+    expected = _expected_multiconnect_coords(10.0, 1.0, 2.5, 0.5, 0.15)
+    _assert_points_close(build_multiconnect_profile(MulticonnectConfig(part_kind=part_kind)), expected)
+
+
+def test_multiconnect_custom_profile_uses_custom_dimensions() -> None:
+    config = MulticonnectConfig(
+        profile=MulticonnectProfile.CUSTOM,
+        part_kind=MulticonnectPartKind.RECEIVER_PASSTHROUGH,
+        radius=6.0,
+        capture_depth=0.7,
+        dovetail_depth=1.4,
+        stem_depth=0.3,
+        receiver_offset=0.2,
+    )
+
+    _assert_points_close(build_multiconnect_profile(config), _expected_multiconnect_coords(6.0, 0.7, 1.4, 0.3, 0.2))
+
+
+def test_multiconnect_rail_uses_profile_width_depth_and_rounded_length() -> None:
+    config = MulticonnectConfig(length=50.0, rounding=MulticonnectRounding.BOTH_SIDES)
+    rail = build_multiconnect_rail(config)
+    size = rail.bounding_box().size
+
+    assert (float(size.X), float(size.Y), float(size.Z)) == pytest.approx((20.0, 4.0, 70.0), abs=0.05)
+
+
+def test_multiconnect_receiver_contains_single_offset_slot() -> None:
+    config = MulticonnectConfig(length=40.0, rounding=MulticonnectRounding.NONE, on_ramps_enabled=False)
+    receiver = build_multiconnect_receiver(config)
+    size = receiver.bounding_box().size
+
+    assert (float(size.X), float(size.Y), float(size.Z)) == pytest.approx((25.3, 6.15, 40.0), abs=0.05)
+    assert receiver.volume < 25.3 * 6.15 * 40.0
+
+
+def test_multiconnect_backer_slot_count_uses_opengrid_spacing() -> None:
+    narrow = build_multiconnect_backer(
+        MulticonnectConfig(width=20.0, length=30.0, rounding=MulticonnectRounding.NONE, on_ramps_enabled=False)
+    )
+    two_slots = build_multiconnect_backer(
+        MulticonnectConfig(width=56.0, length=30.0, rounding=MulticonnectRounding.NONE, on_ramps_enabled=False)
+    )
+
+    assert float(narrow.bounding_box().size.X) == pytest.approx(28.0)
+    assert float(two_slots.bounding_box().size.X) == pytest.approx(56.0)
+    assert two_slots.volume < narrow.volume * 2.0
+
+
+def test_multiconnect_dimple_and_on_ramp_toggles_change_volume_not_envelope() -> None:
+    with_features = MulticonnectConfig(length=56.0)
+    no_dimples = MulticonnectConfig(length=56.0, dimples_enabled=False)
+    no_ramps = MulticonnectConfig(length=56.0, on_ramps_enabled=False)
+
+    rail = build_multiconnect_rail(with_features)
+    rail_without_dimples = build_multiconnect_rail(no_dimples)
+    delete_tool = build_multiconnect_delete_tool(with_features)
+    delete_tool_without_ramps = build_multiconnect_delete_tool(no_ramps)
+
+    assert rail.bounding_box().size == pytest.approx(rail_without_dimples.bounding_box().size)
+    assert rail.volume < rail_without_dimples.volume
+    assert delete_tool.bounding_box().size == pytest.approx(delete_tool_without_ramps.bounding_box().size)
+    assert delete_tool.volume > delete_tool_without_ramps.volume
 
 
 def test_connector_slots_are_at_source_z_centers() -> None:

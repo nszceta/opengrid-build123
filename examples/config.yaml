@@ -1,4 +1,4 @@
-# Unified adjacent-grid connector example configuration.
+# Unified openGrid example configuration.
 # This file intentionally lists every option consumed by examples/main.py.
 
 output:
@@ -13,15 +13,20 @@ viewer:
   # Display-only translations so the separate objects do not overlap in the viewer.
   slot_delete_tool_offset: [42.0, 0.0, 0.0]
   adjacent_connector_offset: [56.0, 0.0, 0.0]
+  multiconnect_rail_offset: [70.0, 0.0, 0.0]
+  multiconnect_receiver_offset: [98.0, 0.0, 0.0]
+  multiconnect_backer_offset: [126.0, 0.0, 0.0]
+  multiconnect_delete_tool_offset: [168.0, 0.0, 0.0]
+  snap_threads_offset: [196.0, 0.0, 0.0]
 
 board:
   # Options: Full, Lite, Heavy.
-  kind: Heavy 
-  board_width: 2
-  board_height: 2
+  kind: Full
+  board_width: 3
+  board_height: 5
   # If fill_space_mode is not None, board_width/board_height are ignored by build_open_grid.
   # Options: None, Complete Tiles Only, Fill Available Space.
-  fill_space_mode: Fill Available Space
+  fill_space_mode: None
   # Fill Available Space generates multiple boards when the requested space is
   # larger than max_tile_width/max_tile_depth; tile_spacing is the gap between
   # those separate boards. For this example, 330x500mm becomes 8x8, 4x8, and
@@ -48,7 +53,7 @@ board:
   connector_holes_left: true
   connector_holes_top: true
   # Options: Everywhere, Corners, By Row and Column, Custom, None.
-  screw_mounting: Corners
+  screw_mounting: Everywhere
   screw_every_x_rows: 1
   screw_every_x_columns: 2
   screw_custom_positions: "011110"
@@ -76,3 +81,46 @@ connector_slot_delete_tool:
 adjacent_grid_connector:
   # Positive connector that locks adjacent openGrid boards together.
   fit_clearance: 0.1
+
+multiconnect:
+  # Options: Standard, Jr., Mini, Multipoint Beta, Custom.
+  profile: Standard
+  # Options: Connector Round, Connector Rail, Connector Double sided Round,
+  # Connector Double-Sided Rail, Connector Rail Delete Tool, Receiver Open-Ended,
+  # Receiver Passthrough, Backer Open-Ended, Backer Passthrough.
+  part_kind: Connector Rail
+  length: 50.0
+  width: 75.0
+  # openGrid spacing is 28mm; Multiboard examples often use 25mm.
+  grid_size: 28.0
+  # Custom-profile dimensions. These are used only when profile is Custom;
+  # the named presets use their source constants instead.
+  radius: 10.0
+  capture_depth: 1.0
+  dovetail_depth: 2.5
+  stem_depth: 0.5
+  receiver_offset: 0.15
+  dimple_radius: 1.0
+  dimples_enabled: true
+  dimple_scale: 1.0
+  # Options: None, One Side, Both Sides.
+  rounding: Both Sides
+  receiver_side_wall_thickness: 2.5
+  receiver_back_thickness: 2.0
+  receiver_top_wall_thickness: 2.5
+  on_ramps_enabled: true
+  on_ramp_every_n_holes: 2
+  on_ramp_start_offset: 1
+
+snap_threads:
+  # Options: Basic, Blunt.
+  thread_type: Blunt
+  height: 6.8
+  diameter: 16.0
+  clearance: 0.5
+  pitch: 3.0
+  top_bevel: 0.5
+  bottom_bevel_standard: 2.0
+  bottom_bevel_lite: 1.2
+  offset_angle: 0.0
+  blunt_cutoff: true

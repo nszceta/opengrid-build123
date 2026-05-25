@@ -13,14 +13,26 @@ __all__ = [
     "BoardKind",
     "ChamferMode",
     "FillSpaceMode",
+    "ThreadType",
     "ConnectorSlotDeleteToolConfig",
     "AdjacentGridConnectorConfig",
+    "MulticonnectProfile",
+    "MulticonnectPartKind",
+    "MulticonnectConfig",
+    "MulticonnectRounding",
+    "SnapThreadConfig",
     "GridConfig",
     "ScrewMounting",
     "StackingMethod",
     "build_fill_space",
     "build_connector_slot_delete_tool",
     "build_adjacent_grid_connector",
+    "build_multiconnect_profile",
+    "build_multiconnect_rail",
+    "build_multiconnect_receiver",
+    "build_multiconnect_backer",
+    "build_multiconnect_delete_tool",
+    "build_snap_threads",
     "build_open_grid",
     "export_grid",
     "open_grid",
@@ -54,6 +66,28 @@ _CONNECTOR_CUTOUT_SEPARATION = 2.5
 _CONNECTOR_CUTOUT_FLARE_WIDTH = 1.0
 _LITE_CONNECTOR_CUTOUT_DISTANCE_FROM_TOP = 1.0
 _CONNECTOR_CUTOUT_HEIGHT = 2.4
+_MULTICONNECT_STANDARD_RADIUS = 10.0
+_MULTICONNECT_STANDARD_DEPTH1 = 1.0
+_MULTICONNECT_STANDARD_DEPTH2 = 2.5
+_MULTICONNECT_STANDARD_DEPTH3 = 0.5
+_MULTICONNECT_STANDARD_OFFSET = 0.15
+_MULTICONNECT_STANDARD_DIMPLE_RADIUS = 1.0
+
+_OG_SNAP_THREADS_DIAMETER = 16.0
+_OG_SNAP_THREADS_CLEARANCE = 0.5
+_OG_SNAP_THREADS_COMPATIBILITY_ANGLE = 53.5
+_OG_SNAP_THREADS_PITCH = 3.0
+_OG_SNAP_THREADS_PROFILE: tuple[Point2D, ...] = (
+    (-1.25 / 3.0, -1.0 / 3.0),
+    (-0.25 / 3.0, 0.0),
+    (0.25 / 3.0, 0.0),
+    (1.25 / 3.0, -1.0 / 3.0),
+)
+_SNAP_THREAD_BASE_SEGMENTS = 144
+_SNAP_THREAD_Z_SEGMENTS_PER_PITCH = 24
+_SNAP_THREAD_LEAD_IN_OFFSET = 1.5
+_SNAP_THREAD_MIN_TURNS = 0.5
+_SNAP_THREAD_BLUNT_ANGLE = 10.0
 
 _SCREW_CUSTOM_DEFAULT = "011110"
 
@@ -87,6 +121,39 @@ class FillSpaceMode(StrEnum):
     NONE = "None"
     COMPLETE_TILES_ONLY = "Complete Tiles Only"
     FILL_AVAILABLE_SPACE = "Fill Available Space"
+
+
+class ThreadType(StrEnum):
+    BASIC = "Basic"
+    BLUNT = "Blunt"
+
+
+
+
+class MulticonnectProfile(StrEnum):
+    STANDARD = "Standard"
+    JR = "Jr."
+    MINI = "Mini"
+    MULTIPOINT_BETA = "Multipoint Beta"
+    CUSTOM = "Custom"
+
+
+class MulticonnectPartKind(StrEnum):
+    CONNECTOR_ROUND = "Connector Round"
+    CONNECTOR_RAIL = "Connector Rail"
+    CONNECTOR_DOUBLE_SIDED_ROUND = "Connector Double sided Round"
+    CONNECTOR_DOUBLE_SIDED_RAIL = "Connector Double-Sided Rail"
+    CONNECTOR_RAIL_DELETE_TOOL = "Connector Rail Delete Tool"
+    RECEIVER_OPEN_ENDED = "Receiver Open-Ended"
+    RECEIVER_PASSTHROUGH = "Receiver Passthrough"
+    BACKER_OPEN_ENDED = "Backer Open-Ended"
+    BACKER_PASSTHROUGH = "Backer Passthrough"
+
+
+class MulticonnectRounding(StrEnum):
+    NONE = "None"
+    ONE_SIDE = "One Side"
+    BOTH_SIDES = "Both Sides"
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +198,89 @@ class AdjacentGridConnectorConfig:
         if self.fit_clearance >= min_dimension:
             raise ValueError("adjacent-grid connector fit_clearance is too large")
 
+@dataclass(frozen=True, slots=True)
+class SnapThreadConfig:
+    """Configuration for the openGrid snap thread primitive.
 
+    Returned thread solids are centered on X/Y with their Z range anchored at
+    ``[0, height]`` so snap bodies and screw variants can compose them directly.
+    """
+
+    thread_type: ThreadType = ThreadType.BLUNT
+    height: float = _DEFAULT_TILE_THICKNESS
+    diameter: float = _OG_SNAP_THREADS_DIAMETER
+    clearance: float = _OG_SNAP_THREADS_CLEARANCE
+    pitch: float = _OG_SNAP_THREADS_PITCH
+    top_bevel: float = 0.5
+    bottom_bevel_standard: float = 2.0
+    bottom_bevel_lite: float = 1.2
+    offset_angle: float = 0.0
+    blunt_cutoff: bool = True
+
+    def validate(self) -> None:
+        if min(self.height, self.diameter, self.pitch) <= 0.0:
+            raise ValueError("snap thread height, diameter, and pitch must be positive")
+        if min(self.clearance, self.top_bevel, self.bottom_bevel_standard, self.bottom_bevel_lite) < 0.0:
+            raise ValueError("snap thread clearance and bevels must be non-negative")
+
+    @property
+    def effective_diameter(self) -> float:
+        return self.diameter + self.clearance
+
+
+
+@dataclass(frozen=True, slots=True)
+class MulticonnectConfig:
+    """Configuration for Multiconnect profile and core solid generation.
+
+    `capture_depth`, `dovetail_depth`, and `stem_depth` map to the source
+    `Depth1`, `Depth2`, and `Depth3` parameters in QuackWorks
+    `Modules/multiconnectGenerator.scad`, licensed CC BY-NC-SA 4.0.
+    """
+
+    profile: MulticonnectProfile = MulticonnectProfile.STANDARD
+    part_kind: MulticonnectPartKind = MulticonnectPartKind.CONNECTOR_RAIL
+    length: float = 50.0
+    width: float = 75.0
+    grid_size: float = _DEFAULT_TILE_SIZE
+    radius: float = _MULTICONNECT_STANDARD_RADIUS
+    capture_depth: float = _MULTICONNECT_STANDARD_DEPTH1
+    dovetail_depth: float = _MULTICONNECT_STANDARD_DEPTH2
+    stem_depth: float = _MULTICONNECT_STANDARD_DEPTH3
+    receiver_offset: float = _MULTICONNECT_STANDARD_OFFSET
+    dimple_radius: float = _MULTICONNECT_STANDARD_DIMPLE_RADIUS
+    dimples_enabled: bool = True
+    dimple_scale: float = 1.0
+    rounding: MulticonnectRounding = MulticonnectRounding.BOTH_SIDES
+    receiver_side_wall_thickness: float = 2.5
+    receiver_back_thickness: float = 2.0
+    receiver_top_wall_thickness: float = 2.5
+    on_ramps_enabled: bool = True
+    on_ramp_every_n_holes: int = 2
+    on_ramp_start_offset: int = 1
+
+    def validate(self) -> None:
+        if min(
+            self.length,
+            self.width,
+            self.grid_size,
+            self.radius,
+            self.capture_depth,
+            self.dovetail_depth,
+            self.stem_depth,
+            self.dimple_radius,
+            self.dimple_scale,
+            self.receiver_side_wall_thickness,
+            self.receiver_back_thickness,
+            self.receiver_top_wall_thickness,
+        ) <= 0.0:
+            raise ValueError("multiconnect dimensions must be positive")
+        if self.receiver_offset < 0.0:
+            raise ValueError("multiconnect receiver_offset must be non-negative")
+        if self.on_ramp_every_n_holes < 1:
+            raise ValueError("multiconnect on_ramp_every_n_holes must be positive")
+        if self.on_ramp_start_offset < 0:
+            raise ValueError("multiconnect on_ramp_start_offset must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,8 +487,382 @@ def build_adjacent_grid_connector(
     return cast(Shape, half + other_half)
 
 
+def build_multiconnect_profile(config: MulticonnectConfig = MulticonnectConfig()) -> tuple[Point2D, ...]:
+    """Return the right-half Multiconnect dovetail profile coordinates.
+
+    Male connector profiles use no offset. Receiver, backer, and rail delete
+    tool profiles apply the source receiver/delete-tool offset.
+    """
+    config.validate()
+    spec = _multiconnect_dimensions(config)
+    offset = spec.receiver_offset if _multiconnect_part_uses_receiver_offset(config.part_kind) else 0.0
+    return _dimensions_to_multiconnect_coords(
+        spec.radius,
+        spec.capture_depth,
+        spec.dovetail_depth,
+        spec.stem_depth,
+        offset,
+    )
 
 
+def build_multiconnect_rail(config: MulticonnectConfig = MulticonnectConfig()) -> Shape:
+    """Build a male Multiconnect rail from the mirrored dovetail profile.
+
+    The rail is centered on X, extends from Y=0 to the profile depth, and runs
+    along +Z. `length` is the straight rail length; rounded end caps extend
+    beyond it by the profile radius, matching the source customizer semantics.
+    """
+    config.validate()
+    rail_config = replace(config, part_kind=MulticonnectPartKind.CONNECTOR_RAIL)
+    profile = build_multiconnect_profile(rail_config)
+    spec = _multiconnect_dimensions(config)
+    rail = _multiconnect_linear_tool(profile, config.length)
+    if config.rounding is not MulticonnectRounding.NONE:
+        rail = cast(Shape, rail + _multiconnect_end_cap(profile, at_end=False))
+    if config.rounding is MulticonnectRounding.BOTH_SIDES:
+        rail = cast(Shape, rail + _multiconnect_end_cap(profile, at_end=True).translate((0.0, 0.0, config.length)))
+    if config.dimples_enabled:
+        rail = rail - _multiconnect_dimples(config, spec.dimple_radius, config.length)
+    return cast(Shape, rail)
+
+
+def build_multiconnect_delete_tool(config: MulticonnectConfig = MulticonnectConfig()) -> Shape:
+    """Build the receiver/backer negative tool for a Multiconnect rail slot."""
+    config.validate()
+    tool_config = replace(config, part_kind=MulticonnectPartKind.CONNECTOR_RAIL_DELETE_TOOL)
+    profile = build_multiconnect_profile(tool_config)
+    tool = _multiconnect_linear_tool(profile, config.length + 2.0 * _EPSILON)
+    if config.rounding is not MulticonnectRounding.NONE:
+        tool = cast(Shape, tool + _multiconnect_end_cap(profile, at_end=False))
+    if config.rounding is MulticonnectRounding.BOTH_SIDES:
+        tool = cast(Shape, tool + _multiconnect_end_cap(profile, at_end=True).translate((0.0, 0.0, config.length)))
+    if config.on_ramps_enabled:
+        tool = cast(Shape, tool + _multiconnect_on_ramps(config, profile))
+    return cast(Shape, tool)
+
+
+def build_multiconnect_receiver(config: MulticonnectConfig = MulticonnectConfig()) -> Shape:
+    """Build a single Multiconnect receiver block with one rail slot."""
+    config.validate()
+    slot_config = replace(config, part_kind=MulticonnectPartKind.RECEIVER_OPEN_ENDED)
+    profile = build_multiconnect_profile(slot_config)
+    slot_width = _multiconnect_profile_width(profile)
+    slot_depth = _multiconnect_profile_depth(profile)
+    body = bd.Box(
+        slot_width + 2.0 * config.receiver_side_wall_thickness,
+        slot_depth + config.receiver_back_thickness,
+        config.length,
+    ).translate((0.0, (slot_depth + config.receiver_back_thickness) / 2.0, config.length / 2.0))
+    tool = build_multiconnect_delete_tool(slot_config).translate((0.0, config.receiver_back_thickness, -_EPSILON))
+    return cast(Shape, body - tool)
+
+
+def build_multiconnect_backer(config: MulticonnectConfig = MulticonnectConfig()) -> Shape:
+    """Build a Multiconnect slotted backer with openGrid-spaced slot columns."""
+    config.validate()
+    backer_config = replace(config, part_kind=MulticonnectPartKind.BACKER_OPEN_ENDED)
+    profile = build_multiconnect_profile(backer_config)
+    slot_depth = _multiconnect_profile_depth(profile)
+    slot_count = max(1, math.floor(config.width / config.grid_size))
+    effective_width = max(config.width, config.grid_size)
+    body = bd.Box(effective_width, slot_depth + config.receiver_back_thickness, config.length).translate(
+        (0.0, (slot_depth + config.receiver_back_thickness) / 2.0, config.length / 2.0)
+    )
+    slot_tool = build_multiconnect_delete_tool(backer_config)
+    slots = [
+        slot_tool.translate((x_offset, config.receiver_back_thickness, -_EPSILON))
+        for x_offset in _multiconnect_slot_x_offsets(slot_count, config.grid_size)
+    ]
+    return cast(Shape, body - _fuse(slots))
+
+
+@dataclass(frozen=True, slots=True)
+class _MulticonnectDimensions:
+    radius: float
+    capture_depth: float
+    dovetail_depth: float
+    stem_depth: float
+    receiver_offset: float
+    dimple_radius: float
+
+
+_MULTICONNECT_PRESETS: dict[MulticonnectProfile, _MulticonnectDimensions] = {
+    MulticonnectProfile.STANDARD: _MulticonnectDimensions(
+        radius=_MULTICONNECT_STANDARD_RADIUS,
+        capture_depth=_MULTICONNECT_STANDARD_DEPTH1,
+        dovetail_depth=_MULTICONNECT_STANDARD_DEPTH2,
+        stem_depth=_MULTICONNECT_STANDARD_DEPTH3,
+        receiver_offset=_MULTICONNECT_STANDARD_OFFSET,
+        dimple_radius=_MULTICONNECT_STANDARD_DIMPLE_RADIUS,
+    ),
+    MulticonnectProfile.JR: _MulticonnectDimensions(
+        radius=5.0,
+        capture_depth=0.6,
+        dovetail_depth=1.2,
+        stem_depth=0.4,
+        receiver_offset=0.16,
+        dimple_radius=0.8,
+    ),
+    MulticonnectProfile.MINI: _MulticonnectDimensions(
+        radius=3.2,
+        capture_depth=1.0,
+        dovetail_depth=1.2,
+        stem_depth=0.4,
+        receiver_offset=0.16,
+        dimple_radius=0.8,
+    ),
+    MulticonnectProfile.MULTIPOINT_BETA: _MulticonnectDimensions(
+        radius=7.9,
+        capture_depth=0.4,
+        dovetail_depth=2.2,
+        stem_depth=0.4,
+        receiver_offset=0.15,
+        dimple_radius=0.8,
+    ),
+}
+
+
+def _multiconnect_dimensions(config: MulticonnectConfig) -> _MulticonnectDimensions:
+    if config.profile is MulticonnectProfile.CUSTOM:
+        return _MulticonnectDimensions(
+            radius=config.radius,
+            capture_depth=config.capture_depth,
+            dovetail_depth=config.dovetail_depth,
+            stem_depth=config.stem_depth,
+            receiver_offset=config.receiver_offset,
+            dimple_radius=config.dimple_radius,
+        )
+    return _MULTICONNECT_PRESETS[config.profile]
+
+
+def _multiconnect_part_uses_receiver_offset(part_kind: MulticonnectPartKind) -> bool:
+    return part_kind in {
+        MulticonnectPartKind.CONNECTOR_RAIL_DELETE_TOOL,
+        MulticonnectPartKind.RECEIVER_OPEN_ENDED,
+        MulticonnectPartKind.RECEIVER_PASSTHROUGH,
+        MulticonnectPartKind.BACKER_OPEN_ENDED,
+        MulticonnectPartKind.BACKER_PASSTHROUGH,
+    }
+
+
+def _dimensions_to_multiconnect_coords(
+    radius: float,
+    capture_depth: float,
+    dovetail_depth: float,
+    stem_depth: float,
+    offset: float,
+) -> tuple[Point2D, ...]:
+    offset_bevel = math.sin(math.radians(45.0)) * offset * 2.0 if offset != 0.0 else 0.0
+    return (
+        (0.0, 0.0),
+        (radius + offset, 0.0),
+        (radius + offset, capture_depth + offset_bevel),
+        (radius - dovetail_depth + offset, dovetail_depth + capture_depth + offset_bevel),
+        (radius - dovetail_depth + offset, dovetail_depth + capture_depth + stem_depth + offset),
+        (0.0, dovetail_depth + capture_depth + stem_depth + offset),
+    )
+
+
+def _multiconnect_full_profile(profile: Sequence[Point2D]) -> tuple[Point2D, ...]:
+    return (*profile, *((-x, y) for x, y in reversed(profile[1:-1])))
+
+
+def _multiconnect_profile_width(profile: Sequence[Point2D]) -> float:
+    return max(x for x, _ in profile) * 2.0
+
+
+def _multiconnect_profile_depth(profile: Sequence[Point2D]) -> float:
+    return max(y for _, y in profile)
+
+
+def _multiconnect_linear_tool(profile: Sequence[Point2D], length: float) -> Shape:
+    with bd.BuildSketch() as sketch:
+        bd.Polygon(_multiconnect_full_profile(profile), align=None)
+    return cast(Shape, bd.extrude(sketch.sketch, amount=length))
+
+
+def _multiconnect_end_cap(profile: Sequence[Point2D], *, at_end: bool) -> Shape:
+    radius = _multiconnect_profile_width(profile) / 2.0
+    depth = _multiconnect_profile_depth(profile)
+    face = bd.Face(bd.Wire.make_polygon((*profile, profile[0])))
+    revolved = bd.Solid.revolve(face, 360.0, bd.Axis.Y)
+    z_center = radius / 2.0 if at_end else -radius / 2.0
+    half_space = bd.Box(
+        2.0 * radius + 2.0 * _EPSILON,
+        depth + 2.0 * _EPSILON,
+        radius + 2.0 * _EPSILON,
+    ).translate((0.0, depth / 2.0, z_center))
+    return cast(Shape, revolved & half_space)
+
+
+def _multiconnect_dimples(config: MulticonnectConfig, dimple_radius: float, length: float) -> Shape:
+    dimple_size = dimple_radius * config.dimple_scale
+    spacing = config.grid_size
+    count = math.ceil(length / spacing) + 1
+    dimples = [
+        bd.Cone(dimple_size, 0.0, dimple_size + _EPSILON, rotation=(90.0, 0.0, 0.0)).translate(
+            (0.0, -_EPSILON, min(index * spacing, length))
+        )
+        for index in range(count)
+    ]
+    return _fuse(dimples)
+
+
+def _multiconnect_on_ramps(config: MulticonnectConfig, profile: Sequence[Point2D]) -> Shape:
+    radius = _multiconnect_profile_width(profile) / 2.0
+    depth = _multiconnect_profile_depth(profile)
+    spacing = config.grid_size * config.on_ramp_every_n_holes
+    start = config.grid_size * config.on_ramp_start_offset
+    count = max(1, math.floor(max(0.0, config.length - start) / spacing) + 1)
+    ramps = [
+        bd.Cone(radius + 1.75, radius, depth + 2.0 * _EPSILON, rotation=(90.0, 0.0, 0.0)).translate(
+            (0.0, depth / 2.0, min(start + index * spacing, config.length))
+        )
+        for index in range(count)
+    ]
+    bounds = bd.Box(
+        _multiconnect_profile_width(profile),
+        depth,
+        config.length + _multiconnect_profile_width(profile) + 2.0 * _EPSILON,
+    ).translate((0.0, depth / 2.0, config.length / 2.0))
+    return cast(Shape, _fuse(ramps) & bounds)
+
+
+def _multiconnect_slot_x_offsets(slot_count: int, grid_size: float) -> tuple[float, ...]:
+    center = (slot_count - 1) / 2.0
+    return tuple((index - center) * grid_size for index in range(slot_count))
+
+
+def build_snap_threads(config: SnapThreadConfig = SnapThreadConfig()) -> Shape:
+    config.validate()
+    return _snap_thread_loft(config)
+
+
+def _snap_thread_loft(config: SnapThreadConfig) -> Shape:
+    diameter = config.effective_diameter
+    rotation = config.offset_angle + _OG_SNAP_THREADS_COMPATIBILITY_ANGLE
+    bottom_bevel = _snap_thread_bottom_bevel(config)
+    angles = _snap_thread_angles(rotation)
+    profile = _scaled_snap_thread_profile(config.pitch)
+    sketches: list[bd.Sketch] = []
+    for z in _snap_thread_z_values(config, rotation):
+        points = tuple(
+            _snap_thread_point(config, profile, angle, z, diameter, bottom_bevel, rotation)
+            for angle in angles
+        )
+        with bd.BuildSketch(bd.Plane.XY.offset(z)) as sketch:
+            bd.Polygon(points, align=None)
+        sketches.append(sketch.sketch)
+    return cast(Shape, bd.loft(sketches, ruled=True, clean=False))
+
+
+def _snap_thread_point(
+    config: SnapThreadConfig,
+    profile: Sequence[Point2D],
+    angle_degrees: float,
+    z: float,
+    diameter: float,
+    bottom_bevel: float,
+    rotation: float,
+) -> Point2D:
+    offset = _snap_thread_radial_offset(config, profile, angle_degrees, z)
+    radius = diameter / 2.0 + offset
+    radius = min(radius, _snap_thread_bevel_radius(config, z, diameter, bottom_bevel))
+
+    angle = math.radians(angle_degrees + rotation)
+    return (radius * math.cos(angle), radius * math.sin(angle))
+
+
+def _snap_thread_radial_offset(config: SnapThreadConfig, profile: Sequence[Point2D], angle_degrees: float, z: float) -> float:
+    pitch = config.pitch
+    local_z = z
+    if config.thread_type is ThreadType.BLUNT:
+        local_z = _snap_thread_blunt_local_z(config, z)
+    local = ((local_z - angle_degrees * pitch / 360.0 + pitch / 2.0) % pitch) - pitch / 2.0
+    root_offset = profile[0][1]
+    if local < profile[0][0] or local > profile[-1][0]:
+        return root_offset
+    for (x0, y0), (x1, y1) in zip(profile, profile[1:]):
+        if x0 <= local <= x1:
+            if x0 == x1:
+                return y1
+            ratio = (local - x0) / (x1 - x0)
+            return y0 + (y1 - y0) * ratio
+    return root_offset
+
+
+def _snap_thread_blunt_local_z(config: SnapThreadConfig, z: float) -> float:
+    return z + _snap_thread_blunt_z_shift(config)
+
+
+def _snap_thread_blunt_z_shift(config: SnapThreadConfig) -> float:
+    bottom_bevel = _snap_thread_bottom_bevel(config)
+    offset_height = min(config.height - _SNAP_THREAD_LEAD_IN_OFFSET - bottom_bevel, 0.0)
+    return _SNAP_THREAD_MIN_TURNS * config.pitch - offset_height - 0.25
+
+
+def _snap_thread_bevel_radius(
+    config: SnapThreadConfig,
+    z: float,
+    diameter: float,
+    bottom_bevel: float,
+    *,
+    clamp_to_root: bool = True,
+) -> float:
+    radius = diameter / 2.0
+    if bottom_bevel > 0.0 and z < bottom_bevel:
+        radius = min(radius, diameter / 2.0 - bottom_bevel + z)
+    if config.top_bevel > 0.0 and z > config.height - config.top_bevel:
+        radius = min(radius, diameter / 2.0 - z + config.height - config.top_bevel)
+    if config.thread_type is ThreadType.BLUNT and config.blunt_cutoff and z > config.height - _EPSILON:
+        radius = min(radius, diameter / 2.0 - config.pitch / 3.0)
+    if clamp_to_root:
+        return max(radius, diameter / 2.0 - config.pitch / 3.0)
+    return radius
+
+
+def _snap_thread_bottom_bevel(config: SnapThreadConfig) -> float:
+    if config.height >= _DEFAULT_TILE_THICKNESS:
+        return config.bottom_bevel_standard
+    if config.height >= 3.4:
+        return config.bottom_bevel_lite
+    return 0.0
+
+
+def _scaled_snap_thread_profile(pitch: float) -> tuple[Point2D, ...]:
+    return tuple((x * pitch, y * pitch) for x, y in _OG_SNAP_THREADS_PROFILE)
+
+
+def _snap_thread_angles(rotation: float) -> tuple[float, ...]:
+    del rotation
+    return tuple(360.0 * index / _SNAP_THREAD_BASE_SEGMENTS for index in range(_SNAP_THREAD_BASE_SEGMENTS))
+
+
+def _snap_thread_z_values(config: SnapThreadConfig, rotation: float) -> tuple[float, ...]:
+    segment_count = max(2, math.ceil(config.height / config.pitch * _SNAP_THREAD_Z_SEGMENTS_PER_PITCH))
+    z_values = {_snap_thread_z_key(config.height * index / segment_count): config.height * index / segment_count for index in range(segment_count + 1)}
+    profile = _scaled_snap_thread_profile(config.pitch)
+    for axis in (0.0, 90.0, 180.0, 270.0):
+        angle = (axis - rotation) % 360.0
+        local_base = angle * config.pitch / 360.0
+        for profile_z, _ in profile:
+            local_z = local_base + profile_z
+            while local_z <= config.height + config.pitch:
+                z = _snap_thread_z_from_local_z(config, local_z)
+                if 0.0 <= z <= config.height:
+                    z_values[_snap_thread_z_key(z)] = z
+                local_z += config.pitch
+    return tuple(value for _, value in sorted(z_values.items()))
+
+
+def _snap_thread_z_key(z: float) -> int:
+    return round(z * 1_000_000_000)
+
+
+def _snap_thread_z_from_local_z(config: SnapThreadConfig, local_z: float) -> float:
+    if config.thread_type is ThreadType.BLUNT:
+        return local_z - _snap_thread_blunt_z_shift(config)
+    return local_z
 
 def export_grid(config: GridConfig, path: str | Path) -> None:
     bd.export_stl(build_open_grid(config), str(path))
