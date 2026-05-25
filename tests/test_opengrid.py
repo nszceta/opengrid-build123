@@ -19,6 +19,9 @@ from opengrid_build123.opengrid import (
     MulticonnectProfile,
     MulticonnectRounding,
     SnapThreadConfig,
+    SnapBodyConfig,
+    ExpandingSnapConfig,
+    SnapBodyShape,
     ConnectorSlotDeleteToolConfig,
     GridConfig,
     ScrewMounting,
@@ -32,6 +35,8 @@ from opengrid_build123.opengrid import (
     build_multiconnect_rail,
     build_multiconnect_receiver,
     build_snap_threads,
+    build_snap_body,
+    build_expanding_snap,
     _connector_z_base,
     _connector_positions,
     build_open_grid,
@@ -39,6 +44,7 @@ from opengrid_build123.opengrid import (
     _scaled_snap_thread_profile,
     _snap_thread_radial_offset,
     _snap_thread_angles,
+    _snap_thread_cut_tool,
 )
 
 _EXAMPLE_CONFIG_PATH = Path(__file__).resolve().parents[1] / "examples" / "config.yaml"
@@ -60,6 +66,24 @@ def _snap_thread_bbox_size(config: SnapThreadConfig) -> tuple[float, float, floa
 
 def _snap_thread_volume(config: SnapThreadConfig) -> float:
     return float(build_snap_threads(config).volume)
+
+
+def _snap_body_bbox_size(config: SnapBodyConfig) -> tuple[float, float, float]:
+    size = build_snap_body(config).bounding_box().size
+    return (float(size.X), float(size.Y), float(size.Z))
+
+
+def _snap_body_volume(config: SnapBodyConfig) -> float:
+    return float(build_snap_body(config).volume)
+
+
+def _expanding_snap_bbox_size(config: ExpandingSnapConfig) -> tuple[float, float, float]:
+    size = build_expanding_snap(config).bounding_box().size
+    return (float(size.X), float(size.Y), float(size.Z))
+
+
+def _expanding_snap_volume(config: ExpandingSnapConfig) -> float:
+    return float(build_expanding_snap(config).volume)
 
 
 def _example_main() -> Any:
@@ -122,6 +146,8 @@ def test_example_config_exhaustively_lists_config_dataclass_fields() -> None:
         "multiconnect_backer_offset",
         "multiconnect_delete_tool_offset",
         "snap_threads_offset",
+        "snap_body_offset",
+        "expanding_snap_offset",
     }
 
     expected_board_fields = {field.name for field in dataclass_fields(GridConfig)} - {"connector_slot_delete_tool"}
@@ -138,6 +164,12 @@ def test_example_config_exhaustively_lists_config_dataclass_fields() -> None:
     assert set(_mapping_section(config, "snap_threads")) == {
         field.name for field in dataclass_fields(SnapThreadConfig)
     }
+    assert set(_mapping_section(config, "snap_body")) == {
+        field.name for field in dataclass_fields(SnapBodyConfig)
+    }
+    assert set(_mapping_section(config, "expanding_snap")) == {
+        field.name for field in dataclass_fields(ExpandingSnapConfig)
+    } - {"snap_body", "threads"}
 
 
 @pytest.mark.parametrize(
@@ -229,6 +261,149 @@ def test_snap_thread_faceting_uses_uniform_angles_without_cardinal_spikes() -> N
 
     assert len(angles) == 144
     assert deltas == pytest.approx([360.0 / 144.0] * 143)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"width": 0.0},
+        {"height": 0.0},
+        {"thickness": 0.0},
+        {"corner_chamfer": -0.1},
+        {"cut_width_inset": -0.1},
+        {"basic_nub_depth": -0.1},
+        {"notch_width": -0.1},
+        {"corner_chamfer": 12.4},
+        {"cut_width_inset": 12.4},
+        {"basic_nub_width_inset": 12.4},
+    ],
+)
+def test_snap_body_config_validation_rejects_invalid_dimensions(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        SnapBodyConfig(**kwargs).validate()
+
+
+def test_snap_body_source_defaults_match_reference_constants() -> None:
+    config = SnapBodyConfig()
+
+    assert config.width == pytest.approx(24.8)
+    assert config.height == pytest.approx(24.8)
+    assert config.thickness == pytest.approx(6.8)
+    assert config.corner_chamfer == pytest.approx((2.7 + 1.0 / math.sqrt(2.0)) * math.sqrt(2.0))
+    assert config.cut_width_inset == pytest.approx(6.2)
+    assert config.directional_nub_depth == pytest.approx(0.8)
+    assert config.notch_gap_inset == pytest.approx(1.8)
+
+
+@pytest.mark.parametrize(
+    ("thickness", "expected_z"),
+    [
+        (6.8, 6.8),
+        (4.0, 4.0),
+        (3.4, 3.4),
+    ],
+)
+def test_snap_body_envelope_preserves_source_width_and_thickness(thickness: float, expected_z: float) -> None:
+    size = _snap_body_bbox_size(SnapBodyConfig(thickness=thickness))
+
+    assert size[0] == pytest.approx(25.6, abs=0.02)
+    assert size[1] == pytest.approx(26.0, abs=0.02)
+    assert size[2] == pytest.approx(expected_z, abs=0.02)
+
+
+def test_snap_body_directional_and_symmetric_variants_share_thickness_but_differ() -> None:
+    directional = SnapBodyConfig(body_shape=SnapBodyShape.DIRECTIONAL)
+    symmetric = SnapBodyConfig(body_shape=SnapBodyShape.SYMMETRIC)
+
+    assert _snap_body_bbox_size(directional)[2] == pytest.approx(_snap_body_bbox_size(symmetric)[2])
+    assert _snap_body_volume(directional) != pytest.approx(_snap_body_volume(symmetric))
+
+
+def test_snap_body_feature_toggles_change_volume_without_moving_anchor() -> None:
+    full = SnapBodyConfig()
+    no_nubs = SnapBodyConfig(enable_nubs=False)
+    no_cuts = SnapBodyConfig(enable_cuts=False)
+    no_notch = SnapBodyConfig(enable_uninstall_notch=False)
+
+    assert _snap_body_volume(no_nubs) < _snap_body_volume(full)
+    assert _snap_body_volume(no_cuts) > _snap_body_volume(full)
+    assert _snap_body_volume(no_notch) > _snap_body_volume(full)
+    assert _snap_body_bbox_size(no_cuts)[2] == pytest.approx(full.thickness)
+
+
+def test_snap_body_bottom_cut_offset_leaves_top_skin() -> None:
+    flush_cut = SnapBodyConfig(
+        enable_corners=False,
+        enable_nubs=False,
+        enable_uninstall_notch=False,
+        enable_directional_slants=False,
+        bottom_cut_offset_to_top=0.0,
+    )
+    recessed_cut = SnapBodyConfig(
+        enable_corners=False,
+        enable_nubs=False,
+        enable_uninstall_notch=False,
+        enable_directional_slants=False,
+        bottom_cut_offset_to_top=1.0,
+    )
+
+    assert _snap_body_bbox_size(recessed_cut) == pytest.approx(_snap_body_bbox_size(flush_cut))
+    assert _snap_body_volume(recessed_cut) > _snap_body_volume(flush_cut)
+
+
+def test_expanding_thread_cut_tool_uses_coarse_helical_thread_profile() -> None:
+    config = ExpandingSnapConfig()
+    tool = _snap_thread_cut_tool(config, config.snap_body.thickness)
+    root_volume = math.pi * (config.threads.effective_diameter / 2.0 - config.threads.pitch / 3.0) ** 2 * config.snap_body.thickness
+
+    assert tool.children == ()
+    assert tool.bounding_box().size.X == pytest.approx(config.threads.effective_diameter, abs=0.2)
+    assert tool.volume > root_volume
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"expand_distance_standard": -0.1},
+        {"expand_distance_lite": -0.1},
+        {"expand_entry_height_blunt": -0.1},
+        {"spring_thickness": -0.1},
+        {"spring_gap": 0.0},
+        {"threads": SnapThreadConfig(diameter=24.8, clearance=0.1)},
+    ],
+)
+def test_expanding_snap_config_validation_rejects_invalid_dimensions(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        ExpandingSnapConfig(**kwargs).validate()
+
+
+def test_expanding_snap_source_defaults_match_reference_constants() -> None:
+    config = ExpandingSnapConfig()
+
+    assert config.expand_distance_standard == pytest.approx(1.0)
+    assert config.expand_distance_lite == pytest.approx(1.2)
+    assert config.expand_entry_height_blunt == pytest.approx(1.0)
+    assert config.expand_end_height_standard == pytest.approx(2.0)
+    assert config.expand_split_angle == pytest.approx(45.0)
+    assert config.spring_thickness == pytest.approx(1.26)
+    assert config.spring_gap == pytest.approx(0.42)
+
+
+def test_expanding_snap_preserves_body_envelope_and_removes_threaded_core() -> None:
+    snap_body = SnapBodyConfig()
+    expanding = ExpandingSnapConfig(snap_body=snap_body)
+
+    assert _expanding_snap_bbox_size(expanding) == pytest.approx(_snap_body_bbox_size(snap_body), abs=0.02)
+    assert _expanding_snap_volume(expanding) < _snap_body_volume(snap_body)
+
+
+def test_expanding_snap_distance_and_spring_gap_change_geometry() -> None:
+    collapsed = ExpandingSnapConfig(expand_distance_standard=0.0)
+    expanded = ExpandingSnapConfig(expand_distance_standard=1.0)
+    wide_gap = ExpandingSnapConfig(spring_gap=0.8)
+
+    assert _expanding_snap_volume(expanded) < _expanding_snap_volume(collapsed)
+    assert _expanding_snap_volume(wide_gap) < _expanding_snap_volume(expanded)
 
 
 @pytest.mark.parametrize(
@@ -457,6 +632,26 @@ def test_multiconnect_dimple_and_on_ramp_toggles_change_volume_not_envelope() ->
     assert delete_tool.bounding_box().size == pytest.approx(delete_tool_without_ramps.bounding_box().size)
     assert delete_tool.volume > delete_tool_without_ramps.volume
 
+def test_output_dir_rejects_blank_directory() -> None:
+    example_main = _example_main()
+
+    with pytest.raises(SystemExit):
+        example_main._output_dir({"output": {"directory": "   "}})
+
+
+def test_prepare_output_dir_removes_stale_output_tree(tmp_path: Path) -> None:
+    output_dir = tmp_path / "output"
+    stale_file = output_dir / "stale.txt"
+    output_dir.mkdir()
+    stale_file.write_text("stale", encoding="utf-8")
+
+    example_main = _example_main()
+    example_main._prepare_output_dir(output_dir)
+
+    assert output_dir.is_dir()
+    assert not stale_file.exists()
+
+
 def test_output_verification_exports_shape_svgs_into_named_subdirectories(tmp_path: Path) -> None:
     rail = build_multiconnect_rail(MulticonnectConfig(length=28.0, rounding=MulticonnectRounding.NONE))
 
@@ -464,6 +659,8 @@ def test_output_verification_exports_shape_svgs_into_named_subdirectories(tmp_pa
     paths = example_main._export_output_verification(
         multiconnect_rail=rail,
         snap_threads=rail,
+        snap_body=rail,
+        expanding_snap=rail,
         verification_dir=tmp_path,
     )
 
@@ -476,9 +673,18 @@ def test_output_verification_exports_shape_svgs_into_named_subdirectories(tmp_pa
         Path("snap_threads/snap_threads_front.svg"),
         Path("snap_threads/snap_threads_top.svg"),
         Path("snap_threads/gallery.html"),
+        Path("snap_body/snap_body_iso.svg"),
+        Path("snap_body/snap_body_front.svg"),
+        Path("snap_body/snap_body_top.svg"),
+        Path("snap_body/gallery.html"),
+        Path("expanding_snap/expanding_snap_iso.svg"),
+        Path("expanding_snap/expanding_snap_front.svg"),
+        Path("expanding_snap/expanding_snap_top.svg"),
+        Path("expanding_snap/gallery.html"),
     )
     for path in paths:
         assert path.stat().st_size > 0
+    assert 'id="hidden"' not in (tmp_path / "snap_body" / "snap_body_top.svg").read_text(encoding="utf-8")
     gallery = (tmp_path / "multiconnect_rail" / "gallery.html").read_text(encoding="utf-8")
     assert "multiconnect_rail_back.svg" in gallery
 

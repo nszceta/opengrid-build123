@@ -14,6 +14,7 @@ __all__ = [
     "ChamferMode",
     "FillSpaceMode",
     "ThreadType",
+    "SnapBodyShape",
     "ConnectorSlotDeleteToolConfig",
     "AdjacentGridConnectorConfig",
     "MulticonnectProfile",
@@ -21,6 +22,8 @@ __all__ = [
     "MulticonnectConfig",
     "MulticonnectRounding",
     "SnapThreadConfig",
+    "SnapBodyConfig",
+    "ExpandingSnapConfig",
     "GridConfig",
     "ScrewMounting",
     "StackingMethod",
@@ -33,6 +36,8 @@ __all__ = [
     "build_multiconnect_backer",
     "build_multiconnect_delete_tool",
     "build_snap_threads",
+    "build_snap_body",
+    "build_expanding_snap",
     "build_open_grid",
     "export_grid",
     "open_grid",
@@ -85,9 +90,15 @@ _OG_SNAP_THREADS_PROFILE: tuple[Point2D, ...] = (
 )
 _SNAP_THREAD_BASE_SEGMENTS = 144
 _SNAP_THREAD_Z_SEGMENTS_PER_PITCH = 24
+_SNAP_THREAD_CUT_BASE_SEGMENTS = 18
+_SNAP_THREAD_CUT_Z_SEGMENTS_PER_PITCH = 3
 _SNAP_THREAD_LEAD_IN_OFFSET = 1.5
 _SNAP_THREAD_MIN_TURNS = 0.5
 _SNAP_THREAD_BLUNT_ANGLE = 10.0
+_OG_SNAP_WIDTH = 24.8
+_OG_SNAP_CORNER_OUTER_DIAGONAL = 2.7 + 1.0 / math.sqrt(2.0)
+_OG_SNAP_CORNER_CHAMFER = _OG_SNAP_CORNER_OUTER_DIAGONAL * math.sqrt(2.0)
+_OG_SNAP_CORNER_INNER_DIAGONAL = _OG_SNAP_WIDTH * math.sqrt(2.0) / 2.0 - _OG_SNAP_CORNER_OUTER_DIAGONAL
 
 _SCREW_CUSTOM_DEFAULT = "011110"
 
@@ -126,6 +137,11 @@ class FillSpaceMode(StrEnum):
 class ThreadType(StrEnum):
     BASIC = "Basic"
     BLUNT = "Blunt"
+
+
+class SnapBodyShape(StrEnum):
+    DIRECTIONAL = "Directional"
+    SYMMETRIC = "Symmetric"
 
 
 
@@ -226,6 +242,175 @@ class SnapThreadConfig:
     @property
     def effective_diameter(self) -> float:
         return self.diameter + self.clearance
+
+@dataclass(frozen=True, slots=True)
+class SnapBodyConfig:
+    """Configuration for the openGrid snap body primitive.
+
+    Defaults mirror `opengrid-projects/lib/opengrid_snap_lib.scad`.
+    Returned snap bodies are centered on X/Y with their Z range anchored at
+    ``[0, thickness]`` for direct composition with snap threads and connector
+    heads.
+    """
+
+    body_shape: SnapBodyShape = SnapBodyShape.DIRECTIONAL
+    width: float = _OG_SNAP_WIDTH
+    height: float = _OG_SNAP_WIDTH
+    thickness: float = _DEFAULT_TILE_THICKNESS
+    corner_chamfer: float = _OG_SNAP_CORNER_CHAMFER
+    directional_corner_fillet_radius: float = 1.5
+    corner_edge_height: float = 1.5
+    top_corner_extrude: float = 1.1
+    bottom_corner_extrude: float = 0.6
+    cut_width_inset: float = 6.2
+    bottom_cut_thickness: float = 0.6
+    bottom_cut_offset_to_top: float = 0.6
+    bottom_cut_offset_to_edge: float = 0.7
+    side_cut_thickness: float = 0.4
+    side_cut_depth: float = 0.8
+    side_cut_offset_to_top: float = 0.8
+    directional_slant_height_standard: float = 3.4
+    directional_slant_height_lite: float = 1.2
+    directional_slant_depth_standard: float = 0.8
+    directional_slant_depth_lite: float = 0.2
+    basic_nub_width_inset: float = 7.0
+    basic_nub_depth: float = 0.4
+    basic_nub_width_tip_taper: float = 4.0
+    basic_nub_top_angle: float = 35.0
+    basic_nub_bottom_angle: float = 35.0
+    basic_nub_fillet_radius: float = 15.0
+    basic_nub_height_standard: float = 2.0
+    basic_nub_height_lite: float = 1.8
+    directional_nub_width_inset: float = 5.0
+    directional_nub_depth: float = 0.8
+    directional_nub_width_tip_taper: float = 1.6
+    directional_nub_top_angle: float = 35.0
+    directional_nub_height_standard: float = 4.0
+    directional_nub_height_lite: float = 2.4
+    directional_nub_bottom_angle_standard: float = 35.0
+    directional_nub_bottom_angle_lite: float = 45.0
+    directional_nub_fillet_radius: float = 2.8
+    antidirect_nub_height_standard: float = 2.0
+    antidirect_nub_height_lite: float = 1.4
+    nub_offset_to_top: float = 1.4
+    notch_width: float = 5.0
+    notch_surface_inset: float = 1.0
+    notch_gap_inset: float = 1.8
+    notch_surface_height_standard: float = 1.2
+    notch_surface_height_lite: float = 0.8
+    notch_gap_height_standard: float = 1.0
+    notch_gap_height_lite: float = 0.6
+    enable_corners: bool = True
+    enable_nubs: bool = True
+    enable_cuts: bool = True
+    enable_uninstall_notch: bool = True
+    enable_directional_slants: bool = True
+
+    def validate(self) -> None:
+        if min(self.width, self.height, self.thickness) <= 0.0:
+            raise ValueError("snap body width, height, and thickness must be positive")
+        non_negative = (
+            self.corner_chamfer,
+            self.directional_corner_fillet_radius,
+            self.corner_edge_height,
+            self.top_corner_extrude,
+            self.bottom_corner_extrude,
+            self.cut_width_inset,
+            self.bottom_cut_thickness,
+            self.bottom_cut_offset_to_top,
+            self.bottom_cut_offset_to_edge,
+            self.side_cut_thickness,
+            self.side_cut_depth,
+            self.side_cut_offset_to_top,
+            self.directional_slant_height_standard,
+            self.directional_slant_height_lite,
+            self.directional_slant_depth_standard,
+            self.directional_slant_depth_lite,
+            self.basic_nub_width_inset,
+            self.basic_nub_depth,
+            self.basic_nub_width_tip_taper,
+            self.basic_nub_top_angle,
+            self.basic_nub_bottom_angle,
+            self.basic_nub_fillet_radius,
+            self.basic_nub_height_standard,
+            self.basic_nub_height_lite,
+            self.directional_nub_width_inset,
+            self.directional_nub_depth,
+            self.directional_nub_width_tip_taper,
+            self.directional_nub_top_angle,
+            self.directional_nub_height_standard,
+            self.directional_nub_height_lite,
+            self.directional_nub_bottom_angle_standard,
+            self.directional_nub_bottom_angle_lite,
+            self.directional_nub_fillet_radius,
+            self.antidirect_nub_height_standard,
+            self.antidirect_nub_height_lite,
+            self.nub_offset_to_top,
+            self.notch_width,
+            self.notch_surface_inset,
+            self.notch_gap_inset,
+            self.notch_surface_height_standard,
+            self.notch_surface_height_lite,
+            self.notch_gap_height_standard,
+            self.notch_gap_height_lite,
+        )
+        if min(non_negative) < 0.0:
+            raise ValueError("snap body feature dimensions must be non-negative")
+        if self.corner_chamfer * 2.0 >= min(self.width, self.height):
+            raise ValueError("snap body corner_chamfer is too large")
+        if self.cut_width_inset * 2.0 >= min(self.width, self.height):
+            raise ValueError("snap body cut_width_inset is too large")
+        if max(self.basic_nub_width_inset, self.directional_nub_width_inset) * 2.0 >= min(self.width, self.height):
+            raise ValueError("snap body nub width inset is too large")
+
+
+@dataclass(frozen=True, slots=True)
+class ExpandingSnapConfig:
+    """Configuration for a self-expanding openGrid snap.
+
+    The defaults are sourced from `opengrid_expanding_snap.scad` and the
+    support libraries it imports. The result is a snap body with snap-thread and
+    spring relief geometry removed from the center so the printed snap can flex.
+    """
+
+    snap_body: SnapBodyConfig = field(default_factory=SnapBodyConfig)
+    threads: SnapThreadConfig = field(default_factory=SnapThreadConfig)
+    expand_distance_standard: float = 1.0
+    expand_distance_lite: float = 1.2
+    expand_entry_height_standard: float = 0.4
+    expand_entry_height_lite: float = 0.4
+    expand_entry_height_blunt: float = 1.0
+    expand_end_height_standard: float = 2.0
+    expand_end_height_lite: float = 1.2
+    expand_split_angle: float = 45.0
+    spring_thickness: float = 1.26
+    spring_to_center_thickness: float = 0.84
+    spring_gap: float = 0.42
+    spring_face_chamfer: float = 0.2
+    center_offset: Point2D = (0.0, 0.0)
+
+    def validate(self) -> None:
+        self.snap_body.validate()
+        self.threads.validate()
+        non_negative = (
+            self.expand_distance_standard,
+            self.expand_distance_lite,
+            self.expand_entry_height_standard,
+            self.expand_entry_height_lite,
+            self.expand_entry_height_blunt,
+            self.expand_end_height_standard,
+            self.expand_end_height_lite,
+            self.spring_thickness,
+            self.spring_to_center_thickness,
+            self.spring_gap,
+            self.spring_face_chamfer,
+        )
+        if min(non_negative) < 0.0:
+            raise ValueError("expanding snap distances and spring dimensions must be non-negative")
+        if self.spring_gap <= 0.0:
+            raise ValueError("expanding snap spring_gap must be positive")
+        if self.threads.effective_diameter >= min(self.snap_body.width, self.snap_body.height):
+            raise ValueError("expanding snap thread diameter is too large for the snap body")
 
 
 
@@ -487,6 +672,43 @@ def build_adjacent_grid_connector(
     return cast(Shape, half + other_half)
 
 
+def build_snap_body(config: SnapBodyConfig = SnapBodyConfig()) -> Shape:
+    """Build the openGrid snap body without threaded or openConnect inserts.
+
+    Geometry follows `opengrid-projects/lib/opengrid_snap_lib.scad`
+    `base_snap`: an octagonal chamfered core, source-configured corner pads,
+    side nubs, side/bottom relief cuts, directional slants, and the front
+    uninstall notch. Text engraving is intentionally not part of this primitive.
+    """
+    config.validate()
+    body = _snap_body_core(config)
+    if config.enable_corners:
+        body = cast(Shape, body + _snap_body_corner_features(config))
+    if config.enable_nubs:
+        body = cast(Shape, body + _snap_body_nubs(config))
+    if config.enable_cuts:
+        body = cast(Shape, body - _snap_body_cut_tools(config))
+    if config.enable_uninstall_notch and config.notch_width > _EPSILON:
+        body = cast(Shape, body - _snap_body_uninstall_notch_tool(config))
+    return body
+
+
+def build_expanding_snap(config: ExpandingSnapConfig = ExpandingSnapConfig()) -> Shape:
+    """Build a self-expanding openGrid snap body with snap-thread reliefs.
+
+    This ports the mechanical intent of `expanding_snap(...)`: standard side
+    relief cuts are omitted, directional lead-in slants remain, and the center
+    receives snap-thread, expansion, and spring-gap subtraction tools.
+    """
+    config.validate()
+    body_config = replace(config.snap_body, enable_cuts=False)
+    body = build_snap_body(body_config)
+    if body_config.body_shape is SnapBodyShape.DIRECTIONAL and body_config.enable_directional_slants:
+        body = cast(Shape, body - _snap_body_directional_slant_tool(body_config))
+    tool = _expanding_snap_removal_tool(config).translate((config.center_offset[0], config.center_offset[1], 0.0))
+    return cast(Shape, body - tool)
+
+
 def build_multiconnect_profile(config: MulticonnectConfig = MulticonnectConfig()) -> tuple[Point2D, ...]:
     """Return the right-half Multiconnect dovetail profile coordinates.
 
@@ -736,19 +958,496 @@ def _multiconnect_slot_x_offsets(slot_count: int, grid_size: float) -> tuple[flo
     return tuple((index - center) * grid_size for index in range(slot_count))
 
 
+def _snap_body_core(config: SnapBodyConfig) -> Shape:
+    return _extrude_xy_polygon(_chamfered_rectangle_points(config.width, config.height, config.corner_chamfer), config.thickness)
+
+
+def _chamfered_rectangle_points(width: float, height: float, chamfer: float) -> tuple[Point2D, ...]:
+    half_width = width / 2.0
+    half_height = height / 2.0
+    if chamfer <= _EPSILON:
+        return (
+            (-half_width, -half_height),
+            (half_width, -half_height),
+            (half_width, half_height),
+            (-half_width, half_height),
+        )
+    return (
+        (-half_width + chamfer, -half_height),
+        (half_width - chamfer, -half_height),
+        (half_width, -half_height + chamfer),
+        (half_width, half_height - chamfer),
+        (half_width - chamfer, half_height),
+        (-half_width + chamfer, half_height),
+        (-half_width, half_height - chamfer),
+        (-half_width, -half_height + chamfer),
+    )
+
+
+def _extrude_xy_polygon(points: Sequence[Point2D], height: float) -> Shape:
+    with bd.BuildSketch() as sketch:
+        bd.Polygon(*points, align=None)
+    return cast(Shape, bd.extrude(sketch.sketch, amount=height))
+
+
+def _snap_body_corner_features(config: SnapBodyConfig) -> Shape:
+    features: list[Shape] = []
+    top_height = min(config.corner_edge_height, config.thickness)
+    if top_height <= _EPSILON:
+        return bd.Part()
+    top_z = config.thickness - top_height
+    for sx in (-1.0, 1.0):
+        for sy in (-1.0, 1.0):
+            features.append(_snap_body_corner_patch(config, sx, sy, config.top_corner_extrude, top_height, top_z))
+    if config.body_shape is SnapBodyShape.DIRECTIONAL and config.thickness >= _DEFAULT_TILE_THICKNESS:
+        for sx in (-1.0, 1.0):
+            features.append(_snap_body_corner_patch(config, sx, 1.0, config.bottom_corner_extrude, top_height, 0.0))
+    return _fuse(features)
+
+
+def _snap_body_corner_patch(
+    config: SnapBodyConfig,
+    sx: float,
+    sy: float,
+    extrude: float,
+    height: float,
+    z_base: float,
+) -> Shape:
+    if extrude <= _EPSILON or config.corner_chamfer <= _EPSILON:
+        return bd.Part()
+    half_width = config.width / 2.0
+    half_height = config.height / 2.0
+    fill = min(config.corner_chamfer, extrude * math.sqrt(2.0))
+    raw_points = (
+        (sx * (half_width - config.corner_chamfer), sy * half_height),
+        (sx * (half_width - config.corner_chamfer + fill), sy * half_height),
+        (sx * half_width, sy * (half_height - config.corner_chamfer + fill)),
+        (sx * half_width, sy * (half_height - config.corner_chamfer)),
+    )
+    return _extrude_xy_polygon(_ordered_points(raw_points), height).translate((0.0, 0.0, z_base))
+
+
+def _ordered_points(points: Sequence[Point2D]) -> tuple[Point2D, ...]:
+    center_x = sum(x for x, _ in points) / len(points)
+    center_y = sum(y for _, y in points) / len(points)
+    return tuple(sorted(points, key=lambda point: math.atan2(point[1] - center_y, point[0] - center_x)))
+
+
+def _snap_body_nubs(config: SnapBodyConfig) -> Shape:
+    nubs: list[Shape] = []
+    for side in ("front", "left", "right", "back"):
+        spec = _snap_body_nub_spec(config, side)
+        tangent_length = _snap_body_side_tangent_length(config, side) - spec.inset * 2.0
+        upper_z = config.thickness - config.nub_offset_to_top
+        lower_z = max(0.0, upper_z - spec.height)
+        if tangent_length > _EPSILON and spec.depth > _EPSILON and upper_z - lower_z > _EPSILON:
+            nubs.append(_snap_body_nub(config, side, tangent_length, lower_z, upper_z, spec))
+    return _fuse(nubs)
+
+
+def _snap_body_nub_spec(config: SnapBodyConfig, side: str) -> _SnapBodyNubSpec:
+    basic_height = _snap_body_standard_or_lite(config, config.basic_nub_height_standard, config.basic_nub_height_lite)
+    if config.body_shape is SnapBodyShape.DIRECTIONAL and side == "back":
+        return _SnapBodyNubSpec(
+            inset=config.directional_nub_width_inset,
+            depth=config.directional_nub_depth,
+            width_tip_taper=config.directional_nub_width_tip_taper,
+            top_angle=config.directional_nub_top_angle,
+            bottom_angle=_snap_body_standard_or_lite(
+                config,
+                config.directional_nub_bottom_angle_standard,
+                config.directional_nub_bottom_angle_lite,
+            ),
+            height=_snap_body_standard_or_lite(
+                config,
+                config.directional_nub_height_standard,
+                config.directional_nub_height_lite,
+            ),
+        )
+    if config.body_shape is SnapBodyShape.DIRECTIONAL and side == "front":
+        return _SnapBodyNubSpec(
+            inset=config.basic_nub_width_inset,
+            depth=config.basic_nub_depth,
+            width_tip_taper=config.basic_nub_width_tip_taper,
+            top_angle=config.basic_nub_top_angle,
+            bottom_angle=config.basic_nub_bottom_angle,
+            height=_snap_body_standard_or_lite(
+                config,
+                config.antidirect_nub_height_standard,
+                config.antidirect_nub_height_lite,
+            ),
+        )
+    return _SnapBodyNubSpec(
+        inset=config.basic_nub_width_inset,
+        depth=config.basic_nub_depth,
+        width_tip_taper=config.basic_nub_width_tip_taper,
+        top_angle=config.basic_nub_top_angle,
+        bottom_angle=config.basic_nub_bottom_angle,
+        height=basic_height,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SnapBodyNubSpec:
+    inset: float
+    depth: float
+    width_tip_taper: float
+    top_angle: float
+    bottom_angle: float
+    height: float
+
+
+def _snap_body_nub(
+    config: SnapBodyConfig,
+    side: str,
+    tangent_length: float,
+    lower_z: float,
+    upper_z: float,
+    spec: _SnapBodyNubSpec,
+) -> Shape:
+    outer_length = max(_EPSILON, tangent_length - spec.width_tip_taper)
+    top_drop = _snap_body_angle_shift(spec.depth, spec.top_angle)
+    bottom_rise = _snap_body_angle_shift(spec.depth, spec.bottom_angle)
+    outer_lower_z = min(upper_z - _EPSILON, lower_z + bottom_rise)
+    outer_upper_z = max(outer_lower_z + _EPSILON, upper_z - top_drop)
+    inner = _snap_body_side_rectangle(config, side, tangent_length, lower_z, upper_z, spec.depth, outside=True, outer=False)
+    outer = _snap_body_side_rectangle(config, side, outer_length, outer_lower_z, outer_upper_z, spec.depth, outside=True, outer=True)
+    return cast(Shape, bd.ConvexPolyhedron((*inner, *outer), align=bd.Align.NONE))
+
+
+def _snap_body_angle_shift(depth: float, angle_degrees: float) -> float:
+    if angle_degrees <= _EPSILON:
+        return 0.0
+    return depth / math.tan(math.radians(angle_degrees))
+
+
+def _snap_body_standard_or_lite(config: SnapBodyConfig, standard: float, lite: float) -> float:
+    if config.thickness >= _DEFAULT_TILE_THICKNESS:
+        return standard
+    return lite
+
+
+def _snap_body_side_tangent_length(config: SnapBodyConfig, side: str) -> float:
+    if side in {"front", "back"}:
+        return config.width
+    return config.height
+
+
+def _snap_body_cut_tools(config: SnapBodyConfig) -> Shape:
+    tools: list[Shape] = []
+    for side in ("front", "left", "right", "back"):
+        if not (config.body_shape is SnapBodyShape.DIRECTIONAL and side == "back"):
+            tools.append(_snap_body_bottom_cut(config, side))
+        if side != "front" or config.enable_uninstall_notch:
+            tools.append(_snap_body_side_cut(config, side))
+    if config.body_shape is SnapBodyShape.DIRECTIONAL and config.enable_directional_slants:
+        tools.append(_snap_body_directional_slant_tool(config))
+    return _fuse(tools)
+
+
+def _snap_body_bottom_cut(config: SnapBodyConfig, side: str) -> Shape:
+    length = _snap_body_side_tangent_length(config, side) - config.cut_width_inset * 2.0
+    cut_height = max(0.0, config.thickness - config.bottom_cut_offset_to_top + _EPSILON)
+    return _snap_side_box(
+        config,
+        side,
+        length,
+        config.bottom_cut_thickness,
+        cut_height,
+        cut_height / 2.0 - _EPSILON / 2.0,
+        outside=False,
+        offset=config.bottom_cut_offset_to_edge,
+    )
+
+
+def _snap_body_side_cut(config: SnapBodyConfig, side: str) -> Shape:
+    length = _snap_body_side_tangent_length(config, side) - config.cut_width_inset * 2.0
+    upper_z = config.thickness - config.side_cut_offset_to_top
+    lower_z = max(0.0, upper_z - config.side_cut_thickness)
+    cut_height = upper_z - lower_z
+    return _snap_side_box(
+        config,
+        side,
+        length,
+        config.side_cut_depth,
+        cut_height,
+        (lower_z + upper_z) / 2.0,
+        outside=False,
+    )
+
+
+def _snap_body_directional_slant_tool(config: SnapBodyConfig) -> Shape:
+    depth = _snap_body_standard_or_lite(
+        config,
+        config.directional_slant_depth_standard,
+        config.directional_slant_depth_lite,
+    )
+    height = _snap_body_standard_or_lite(
+        config,
+        config.directional_slant_height_standard,
+        config.directional_slant_height_lite,
+    )
+    length = config.width - config.cut_width_inset * 2.0
+    slant_height = min(height, config.thickness)
+    lower = _snap_body_side_rectangle(
+        config,
+        "front",
+        length,
+        0.0,
+        slant_height,
+        depth,
+        outside=False,
+        outer=True,
+        offset=config.bottom_cut_offset_to_edge + config.bottom_cut_thickness,
+    )
+    upper = _snap_body_side_rectangle(
+        config,
+        "front",
+        length,
+        slant_height,
+        slant_height + _EPSILON,
+        _EPSILON,
+        outside=False,
+        outer=False,
+        offset=config.bottom_cut_offset_to_edge + config.bottom_cut_thickness,
+    )
+    return cast(Shape, bd.ConvexPolyhedron((*lower, *upper), align=bd.Align.NONE))
+
+
+def _snap_body_uninstall_notch_tool(config: SnapBodyConfig) -> Shape:
+    surface_height = _snap_body_standard_or_lite(
+        config,
+        config.notch_surface_height_standard,
+        config.notch_surface_height_lite,
+    )
+    gap_height = _snap_body_standard_or_lite(
+        config,
+        config.notch_gap_height_standard,
+        config.notch_gap_height_lite,
+    )
+    surface = _snap_side_box(
+        config,
+        "front",
+        config.notch_width,
+        config.notch_surface_inset,
+        surface_height,
+        config.thickness - surface_height / 2.0,
+        outside=False,
+    )
+    gap = _snap_side_box(
+        config,
+        "front",
+        config.notch_width,
+        config.notch_gap_inset,
+        gap_height,
+        config.thickness - surface_height - gap_height / 2.0,
+        outside=False,
+        offset=config.notch_surface_inset,
+    )
+    return _fuse((surface, gap))
+
+
+def _snap_body_side_rectangle(
+    config: SnapBodyConfig,
+    side: str,
+    length: float,
+    lower_z: float,
+    upper_z: float,
+    depth: float,
+    *,
+    outside: bool,
+    outer: bool,
+    offset: float = 0.0,
+) -> tuple[Point3D, ...]:
+    half_length = length / 2.0
+    if side in {"front", "back"}:
+        sign = 1.0 if side == "back" else -1.0
+        y_inner = sign * config.height / 2.0
+        y_outer = sign * (config.height / 2.0 + depth)
+        if not outside:
+            y_inner = sign * (config.height / 2.0 - offset)
+            y_outer = sign * (config.height / 2.0 - offset - depth)
+        y = y_outer if outer else y_inner
+        return (
+            (-half_length, y, lower_z),
+            (half_length, y, lower_z),
+            (half_length, y, upper_z),
+            (-half_length, y, upper_z),
+        )
+    sign = 1.0 if side == "right" else -1.0
+    x_inner = sign * config.width / 2.0
+    x_outer = sign * (config.width / 2.0 + depth)
+    if not outside:
+        x_inner = sign * (config.width / 2.0 - offset)
+        x_outer = sign * (config.width / 2.0 - offset - depth)
+    x = x_outer if outer else x_inner
+    return (
+        (x, -half_length, lower_z),
+        (x, half_length, lower_z),
+        (x, half_length, upper_z),
+        (x, -half_length, upper_z),
+    )
+
+
+def _snap_side_box(
+    config: SnapBodyConfig,
+    side: str,
+    length: float,
+    depth: float,
+    height: float,
+    z_center: float,
+    *,
+    outside: bool,
+    offset: float = 0.0,
+) -> Shape:
+    if min(length, depth, height) <= _EPSILON:
+        return bd.Part()
+    if side in {"front", "back"}:
+        sign = 1.0 if side == "back" else -1.0
+        y_abs = config.height / 2.0 + depth / 2.0 if outside else config.height / 2.0 - offset - depth / 2.0
+        return cast(Shape, bd.Box(length, depth, height).translate((0.0, sign * y_abs, z_center)))
+    sign = 1.0 if side == "right" else -1.0
+    x_abs = config.width / 2.0 + depth / 2.0 if outside else config.width / 2.0 - offset - depth / 2.0
+    return cast(Shape, bd.Box(depth, length, height).translate((sign * x_abs, 0.0, z_center)))
+
+
+def _expanding_snap_removal_tool(config: ExpandingSnapConfig) -> Shape:
+    return _compound(
+        (
+            _expanding_thread_tool(config),
+            _expanding_spring_gap_tools(config),
+        )
+    )
+
+
+def _expanding_thread_tool(config: ExpandingSnapConfig) -> Shape:
+    height = config.snap_body.thickness
+    entry_height = min(_expanding_snap_entry_height(config), height)
+    end_height = min(_expanding_snap_end_height(config), max(0.0, height - entry_height))
+    transition_height = max(0.0, height - entry_height - end_height)
+    tools: list[Shape] = []
+    if entry_height > _EPSILON:
+        tools.append(_snap_thread_cut_tool(config, entry_height + _EPSILON).translate((0.0, 0.0, -_EPSILON / 2.0)))
+
+    distance = _expanding_snap_distance(config)
+    transition_offset = distance / 2.0
+    if transition_height > _EPSILON:
+        tools.extend(
+            _expanded_thread_pair(
+                config,
+                transition_height + _EPSILON,
+                entry_height - _EPSILON / 2.0,
+                transition_offset,
+            )
+        )
+    if end_height > _EPSILON:
+        tools.extend(
+            _expanded_thread_pair(
+                config,
+                end_height + _EPSILON,
+                entry_height + transition_height - _EPSILON / 2.0,
+                distance,
+            )
+        )
+    return _compound(tools)
+
+
+def _expanded_thread_pair(
+    config: ExpandingSnapConfig,
+    height: float,
+    z_base: float,
+    distance: float,
+) -> tuple[Shape, Shape]:
+    thread = _snap_thread_cut_tool(config, height)
+    return (
+        thread.translate((*_polar_offset(config.expand_split_angle, distance), z_base)),
+        thread.translate((*_polar_offset(config.expand_split_angle + 180.0, distance), z_base)),
+    )
+
+
+def _snap_thread_cut_tool(config: ExpandingSnapConfig, height: float) -> Shape:
+    return _snap_thread_loft(
+        replace(config.threads, height=height),
+        base_segments=_SNAP_THREAD_CUT_BASE_SEGMENTS,
+        z_segments_per_pitch=_SNAP_THREAD_CUT_Z_SEGMENTS_PER_PITCH,
+    )
+
+
+
+
+def _expanding_spring_gap_tools(config: ExpandingSnapConfig) -> Shape:
+    body = config.snap_body
+    thread_radius = config.threads.effective_diameter / 2.0
+    reach = thread_radius + config.spring_to_center_thickness + config.spring_thickness
+    gap_length = max(body.width, body.height)
+    gap_height = body.thickness + 2.0 * _EPSILON
+    radial_gaps = (
+        _radial_gap_tool(config.expand_split_angle, reach, gap_length, config.spring_gap, gap_height),
+        _radial_gap_tool(config.expand_split_angle + 180.0, reach, gap_length, config.spring_gap, gap_height),
+    )
+    center_split = _rotated_box(
+        max(body.width, body.height) + 2.0,
+        config.spring_gap,
+        gap_height,
+        config.expand_split_angle + 90.0,
+        (0.0, 0.0, body.thickness / 2.0),
+    )
+    return _compound((*radial_gaps, center_split))
+
+
+def _radial_gap_tool(angle_degrees: float, start: float, length: float, width: float, height: float) -> Shape:
+    center_distance = start + length / 2.0
+    x, y = _polar_offset(angle_degrees, center_distance)
+    return _rotated_box(length, width, height, angle_degrees, (x, y, height / 2.0 - _EPSILON))
+
+
+def _rotated_box(width: float, depth: float, height: float, angle_degrees: float, center: Point3D) -> Shape:
+    return cast(Shape, bd.Box(width, depth, height).rotate(bd.Axis.Z, angle_degrees).translate(center))
+
+
+def _polar_offset(angle_degrees: float, distance: float) -> Point2D:
+    angle = math.radians(angle_degrees)
+    return (math.cos(angle) * distance, math.sin(angle) * distance)
+
+
+def _expanding_snap_distance(config: ExpandingSnapConfig) -> float:
+    if config.snap_body.thickness >= _DEFAULT_TILE_THICKNESS:
+        return config.expand_distance_standard
+    return config.expand_distance_lite
+
+
+def _expanding_snap_entry_height(config: ExpandingSnapConfig) -> float:
+    if config.threads.thread_type is ThreadType.BLUNT:
+        return config.expand_entry_height_blunt
+    if config.snap_body.thickness >= _DEFAULT_TILE_THICKNESS:
+        return config.expand_entry_height_standard
+    return config.expand_entry_height_lite
+
+
+def _expanding_snap_end_height(config: ExpandingSnapConfig) -> float:
+    if config.snap_body.thickness >= _DEFAULT_TILE_THICKNESS:
+        return config.expand_end_height_standard
+    return config.expand_end_height_lite
+
+
 def build_snap_threads(config: SnapThreadConfig = SnapThreadConfig()) -> Shape:
     config.validate()
     return _snap_thread_loft(config)
 
 
-def _snap_thread_loft(config: SnapThreadConfig) -> Shape:
+def _snap_thread_loft(
+    config: SnapThreadConfig,
+    *,
+    base_segments: int = _SNAP_THREAD_BASE_SEGMENTS,
+    z_segments_per_pitch: int = _SNAP_THREAD_Z_SEGMENTS_PER_PITCH,
+) -> Shape:
     diameter = config.effective_diameter
     rotation = config.offset_angle + _OG_SNAP_THREADS_COMPATIBILITY_ANGLE
     bottom_bevel = _snap_thread_bottom_bevel(config)
-    angles = _snap_thread_angles(rotation)
+    angles = _snap_thread_angles(rotation, base_segments=base_segments)
     profile = _scaled_snap_thread_profile(config.pitch)
     sketches: list[bd.Sketch] = []
-    for z in _snap_thread_z_values(config, rotation):
+    for z in _snap_thread_z_values(config, rotation, z_segments_per_pitch=z_segments_per_pitch):
         points = tuple(
             _snap_thread_point(config, profile, angle, z, diameter, bottom_bevel, rotation)
             for angle in angles
@@ -836,13 +1535,18 @@ def _scaled_snap_thread_profile(pitch: float) -> tuple[Point2D, ...]:
     return tuple((x * pitch, y * pitch) for x, y in _OG_SNAP_THREADS_PROFILE)
 
 
-def _snap_thread_angles(rotation: float) -> tuple[float, ...]:
+def _snap_thread_angles(rotation: float, *, base_segments: int = _SNAP_THREAD_BASE_SEGMENTS) -> tuple[float, ...]:
     del rotation
-    return tuple(360.0 * index / _SNAP_THREAD_BASE_SEGMENTS for index in range(_SNAP_THREAD_BASE_SEGMENTS))
+    return tuple(360.0 * index / base_segments for index in range(base_segments))
 
 
-def _snap_thread_z_values(config: SnapThreadConfig, rotation: float) -> tuple[float, ...]:
-    segment_count = max(2, math.ceil(config.height / config.pitch * _SNAP_THREAD_Z_SEGMENTS_PER_PITCH))
+def _snap_thread_z_values(
+    config: SnapThreadConfig,
+    rotation: float,
+    *,
+    z_segments_per_pitch: int = _SNAP_THREAD_Z_SEGMENTS_PER_PITCH,
+) -> tuple[float, ...]:
+    segment_count = max(2, math.ceil(config.height / config.pitch * z_segments_per_pitch))
     z_values = {_snap_thread_z_key(config.height * index / segment_count): config.height * index / segment_count for index in range(segment_count + 1)}
     profile = _scaled_snap_thread_profile(config.pitch)
     for axis in (0.0, 90.0, 180.0, 270.0):

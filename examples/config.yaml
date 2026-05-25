@@ -18,6 +18,8 @@ viewer:
   multiconnect_backer_offset: [126.0, 0.0, 0.0]
   multiconnect_delete_tool_offset: [168.0, 0.0, 0.0]
   snap_threads_offset: [196.0, 0.0, 0.0]
+  snap_body_offset: [224.0, 0.0, 0.0]
+  expanding_snap_offset: [252.0, 0.0, 0.0]
 
 board:
   # Options: Full, Lite, Heavy.
@@ -124,3 +126,73 @@ snap_threads:
   bottom_bevel_lite: 1.2
   offset_angle: 0.0
   blunt_cutoff: true
+
+snap_body:
+  # Options: Directional, Symmetric.
+  body_shape: Directional
+  width: 24.8
+  height: 24.8
+  thickness: 6.8
+  corner_chamfer: 4.818376618407356
+  directional_corner_fillet_radius: 1.5
+  corner_edge_height: 1.5
+  top_corner_extrude: 1.1
+  bottom_corner_extrude: 0.6
+  cut_width_inset: 6.2
+  bottom_cut_thickness: 0.6
+  bottom_cut_offset_to_top: 0.6
+  bottom_cut_offset_to_edge: 0.7
+  side_cut_thickness: 0.4
+  side_cut_depth: 0.8
+  side_cut_offset_to_top: 0.8
+  directional_slant_height_standard: 3.4
+  directional_slant_height_lite: 1.2
+  directional_slant_depth_standard: 0.8
+  directional_slant_depth_lite: 0.2
+  basic_nub_width_inset: 7.0
+  basic_nub_depth: 0.4
+  basic_nub_width_tip_taper: 4.0
+  basic_nub_top_angle: 35.0
+  basic_nub_bottom_angle: 35.0
+  basic_nub_fillet_radius: 15.0
+  basic_nub_height_standard: 2.0
+  basic_nub_height_lite: 1.8
+  directional_nub_width_inset: 5.0
+  directional_nub_depth: 0.8
+  directional_nub_width_tip_taper: 1.6
+  directional_nub_top_angle: 35.0
+  directional_nub_height_standard: 4.0
+  directional_nub_height_lite: 2.4
+  directional_nub_bottom_angle_standard: 35.0
+  directional_nub_bottom_angle_lite: 45.0
+  directional_nub_fillet_radius: 2.8
+  antidirect_nub_height_standard: 2.0
+  antidirect_nub_height_lite: 1.4
+  nub_offset_to_top: 1.4
+  notch_width: 5.0
+  notch_surface_inset: 1.0
+  notch_gap_inset: 1.8
+  notch_surface_height_standard: 1.2
+  notch_surface_height_lite: 0.8
+  notch_gap_height_standard: 1.0
+  notch_gap_height_lite: 0.6
+  enable_corners: true
+  enable_nubs: true
+  enable_cuts: true
+  enable_uninstall_notch: true
+  enable_directional_slants: true
+
+expanding_snap:
+  expand_distance_standard: 1.0
+  expand_distance_lite: 1.2
+  expand_entry_height_standard: 0.4
+  expand_entry_height_lite: 0.4
+  expand_entry_height_blunt: 1.0
+  expand_end_height_standard: 2.0
+  expand_end_height_lite: 1.2
+  expand_split_angle: 45.0
+  spring_thickness: 1.26
+  spring_to_center_thickness: 0.84
+  spring_gap: 0.42
+  spring_face_chamfer: 0.2
+  center_offset: [0.0, 0.0]

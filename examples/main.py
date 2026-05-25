@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -21,6 +22,9 @@ from opengrid_build123 import (
     MulticonnectProfile,
     MulticonnectRounding,
     SnapThreadConfig,
+    ExpandingSnapConfig,
+    SnapBodyConfig,
+    SnapBodyShape,
     GridConfig,
     ScrewMounting,
     StackingMethod,
@@ -33,6 +37,8 @@ from opengrid_build123 import (
     build_adjacent_grid_connector,
     build_connector_slot_delete_tool,
     build_snap_threads,
+    build_snap_body,
+    build_expanding_snap,
     build_open_grid,
 )
 
@@ -50,6 +56,18 @@ _SNAP_THREAD_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
     ("snap_threads_iso.svg", (28.0, -36.0, 24.0), (0.0, 0.0, 1.0)),
     ("snap_threads_front.svg", (0.0, -48.0, 3.4), (0.0, 0.0, 1.0)),
     ("snap_threads_top.svg", (0.0, 0.0, 48.0), (0.0, 1.0, 0.0)),
+)
+
+_SNAP_BODY_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("snap_body_iso.svg", (36.0, -48.0, 28.0), (0.0, 0.0, 1.0)),
+    ("snap_body_front.svg", (0.0, -64.0, 3.4), (0.0, 0.0, 1.0)),
+    ("snap_body_top.svg", (0.0, 0.0, 64.0), (0.0, 1.0, 0.0)),
+)
+
+_EXPANDING_SNAP_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("expanding_snap_iso.svg", (36.0, -48.0, 28.0), (0.0, 0.0, 1.0)),
+    ("expanding_snap_front.svg", (0.0, -64.0, 3.4), (0.0, 0.0, 1.0)),
+    ("expanding_snap_top.svg", (0.0, 0.0, 64.0), (0.0, 1.0, 0.0)),
 )
 
 class _DisplayShape(Protocol):
@@ -135,6 +153,13 @@ def _as_vector(section: dict[str, Any], key: str) -> tuple[float, float, float]:
     return (_vector_item(value[0], key), _vector_item(value[1], key), _vector_item(value[2], key))
 
 
+def _as_vector2(section: dict[str, Any], key: str) -> tuple[float, float]:
+    value = _required(section, key)
+    if not isinstance(value, list) or len(value) != 2:
+        raise SystemExit(f"Config key `{key}` must be a two-number list")
+    return (_vector_item(value[0], key), _vector_item(value[1], key))
+
+
 def _vector_item(value: Any, key: str) -> float:
     if not isinstance(value, int | float):
         raise SystemExit(f"Config key `{key}` must contain only numbers")
@@ -143,13 +168,22 @@ def _vector_item(value: Any, key: str) -> float:
 
 def _output_dir(config: dict[str, Any]) -> Path:
     output = _section(config, "output")
-    return Path(_as_str(output, "directory"))
+    directory = _as_str(output, "directory").strip()
+    if not directory:
+        raise SystemExit("Config key `directory` must not be blank")
+    return Path(directory)
 
 
 def _verification_dir(config: dict[str, Any]) -> Path:
     return _output_dir(config) / "verification"
 
 
+def _prepare_output_dir(path: Path) -> None:
+    if path.exists():
+        if not path.is_dir():
+            raise SystemExit(f"Output path {path} exists but is not a directory")
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
 
 
 def _slot_delete_tool_config(config: dict[str, Any]) -> ConnectorSlotDeleteToolConfig:
@@ -213,6 +247,85 @@ def _snap_thread_config(config: dict[str, Any]) -> SnapThreadConfig:
     )
 
 
+def _snap_body_config(config: dict[str, Any]) -> SnapBodyConfig:
+    snap_body = _section(config, "snap_body")
+    return SnapBodyConfig(
+        body_shape=SnapBodyShape(_as_str(snap_body, "body_shape")),
+        width=_as_float(snap_body, "width"),
+        height=_as_float(snap_body, "height"),
+        thickness=_as_float(snap_body, "thickness"),
+        corner_chamfer=_as_float(snap_body, "corner_chamfer"),
+        directional_corner_fillet_radius=_as_float(snap_body, "directional_corner_fillet_radius"),
+        corner_edge_height=_as_float(snap_body, "corner_edge_height"),
+        top_corner_extrude=_as_float(snap_body, "top_corner_extrude"),
+        bottom_corner_extrude=_as_float(snap_body, "bottom_corner_extrude"),
+        cut_width_inset=_as_float(snap_body, "cut_width_inset"),
+        bottom_cut_thickness=_as_float(snap_body, "bottom_cut_thickness"),
+        bottom_cut_offset_to_top=_as_float(snap_body, "bottom_cut_offset_to_top"),
+        bottom_cut_offset_to_edge=_as_float(snap_body, "bottom_cut_offset_to_edge"),
+        side_cut_thickness=_as_float(snap_body, "side_cut_thickness"),
+        side_cut_depth=_as_float(snap_body, "side_cut_depth"),
+        side_cut_offset_to_top=_as_float(snap_body, "side_cut_offset_to_top"),
+        directional_slant_height_standard=_as_float(snap_body, "directional_slant_height_standard"),
+        directional_slant_height_lite=_as_float(snap_body, "directional_slant_height_lite"),
+        directional_slant_depth_standard=_as_float(snap_body, "directional_slant_depth_standard"),
+        directional_slant_depth_lite=_as_float(snap_body, "directional_slant_depth_lite"),
+        basic_nub_width_inset=_as_float(snap_body, "basic_nub_width_inset"),
+        basic_nub_depth=_as_float(snap_body, "basic_nub_depth"),
+        basic_nub_width_tip_taper=_as_float(snap_body, "basic_nub_width_tip_taper"),
+        basic_nub_top_angle=_as_float(snap_body, "basic_nub_top_angle"),
+        basic_nub_bottom_angle=_as_float(snap_body, "basic_nub_bottom_angle"),
+        basic_nub_fillet_radius=_as_float(snap_body, "basic_nub_fillet_radius"),
+        basic_nub_height_standard=_as_float(snap_body, "basic_nub_height_standard"),
+        basic_nub_height_lite=_as_float(snap_body, "basic_nub_height_lite"),
+        directional_nub_width_inset=_as_float(snap_body, "directional_nub_width_inset"),
+        directional_nub_depth=_as_float(snap_body, "directional_nub_depth"),
+        directional_nub_width_tip_taper=_as_float(snap_body, "directional_nub_width_tip_taper"),
+        directional_nub_top_angle=_as_float(snap_body, "directional_nub_top_angle"),
+        directional_nub_height_standard=_as_float(snap_body, "directional_nub_height_standard"),
+        directional_nub_height_lite=_as_float(snap_body, "directional_nub_height_lite"),
+        directional_nub_bottom_angle_standard=_as_float(snap_body, "directional_nub_bottom_angle_standard"),
+        directional_nub_bottom_angle_lite=_as_float(snap_body, "directional_nub_bottom_angle_lite"),
+        directional_nub_fillet_radius=_as_float(snap_body, "directional_nub_fillet_radius"),
+        antidirect_nub_height_standard=_as_float(snap_body, "antidirect_nub_height_standard"),
+        antidirect_nub_height_lite=_as_float(snap_body, "antidirect_nub_height_lite"),
+        nub_offset_to_top=_as_float(snap_body, "nub_offset_to_top"),
+        notch_width=_as_float(snap_body, "notch_width"),
+        notch_surface_inset=_as_float(snap_body, "notch_surface_inset"),
+        notch_gap_inset=_as_float(snap_body, "notch_gap_inset"),
+        notch_surface_height_standard=_as_float(snap_body, "notch_surface_height_standard"),
+        notch_surface_height_lite=_as_float(snap_body, "notch_surface_height_lite"),
+        notch_gap_height_standard=_as_float(snap_body, "notch_gap_height_standard"),
+        notch_gap_height_lite=_as_float(snap_body, "notch_gap_height_lite"),
+        enable_corners=_as_bool(snap_body, "enable_corners"),
+        enable_nubs=_as_bool(snap_body, "enable_nubs"),
+        enable_cuts=_as_bool(snap_body, "enable_cuts"),
+        enable_uninstall_notch=_as_bool(snap_body, "enable_uninstall_notch"),
+        enable_directional_slants=_as_bool(snap_body, "enable_directional_slants"),
+    )
+
+
+def _expanding_snap_config(snap_body: SnapBodyConfig, threads: SnapThreadConfig, config: dict[str, Any]) -> ExpandingSnapConfig:
+    expanding_snap = _section(config, "expanding_snap")
+    return ExpandingSnapConfig(
+        snap_body=snap_body,
+        threads=threads,
+        expand_distance_standard=_as_float(expanding_snap, "expand_distance_standard"),
+        expand_distance_lite=_as_float(expanding_snap, "expand_distance_lite"),
+        expand_entry_height_standard=_as_float(expanding_snap, "expand_entry_height_standard"),
+        expand_entry_height_lite=_as_float(expanding_snap, "expand_entry_height_lite"),
+        expand_entry_height_blunt=_as_float(expanding_snap, "expand_entry_height_blunt"),
+        expand_end_height_standard=_as_float(expanding_snap, "expand_end_height_standard"),
+        expand_end_height_lite=_as_float(expanding_snap, "expand_end_height_lite"),
+        expand_split_angle=_as_float(expanding_snap, "expand_split_angle"),
+        spring_thickness=_as_float(expanding_snap, "spring_thickness"),
+        spring_to_center_thickness=_as_float(expanding_snap, "spring_to_center_thickness"),
+        spring_gap=_as_float(expanding_snap, "spring_gap"),
+        spring_face_chamfer=_as_float(expanding_snap, "spring_face_chamfer"),
+        center_offset=_as_vector2(expanding_snap, "center_offset"),
+    )
+
+
 def _grid_config(config: dict[str, Any], slot_delete_tool: ConnectorSlotDeleteToolConfig) -> GridConfig:
     board = _section(config, "board")
     return GridConfig(
@@ -269,6 +382,8 @@ def _show_objects(
     multiconnect_backer: _DisplayShape,
     multiconnect_delete_tool: _DisplayShape,
     snap_threads: _DisplayShape,
+    snap_body: _DisplayShape,
+    expanding_snap: _DisplayShape,
     viewer: dict[str, Any],
 ) -> None:
     port = _as_optional_port(viewer, "port")
@@ -287,6 +402,8 @@ def _show_objects(
         multiconnect_backer.translate(_as_vector(viewer, "multiconnect_backer_offset")),
         multiconnect_delete_tool.translate(_as_vector(viewer, "multiconnect_delete_tool_offset")),
         snap_threads.translate(_as_vector(viewer, "snap_threads_offset")),
+        snap_body.translate(_as_vector(viewer, "snap_body_offset")),
+        expanding_snap.translate(_as_vector(viewer, "expanding_snap_offset")),
         names=[
             "openGrid board with adjacent-grid connector slots",
             "adjacent-grid connector slot delete tool",
@@ -296,6 +413,8 @@ def _show_objects(
             "Multiconnect backer",
             "Multiconnect delete tool",
             "snap threads",
+            "snap body",
+            "expanding snap",
         ],
         port=port,
         reset_camera=Camera.CENTER,
@@ -310,11 +429,9 @@ def _export_svg_projection(
     viewport_origin: _Vector3,
     viewport_up: _Vector3 = (0.0, 0.0, 1.0),
 ) -> None:
-    visible, hidden = cast(Any, shape).project_to_viewport(viewport_origin, viewport_up=viewport_up)
+    visible, _hidden = cast(Any, shape).project_to_viewport(viewport_origin, viewport_up=viewport_up)
     exporter = bd.ExportSVG(scale=8.0, margin=2.0)
     exporter.add_layer("visible", line_color=bd.Color("black"), line_weight=0.08)
-    exporter.add_layer("hidden", line_color=bd.Color("lightgray"), line_weight=0.04, line_type=bd.LineType.HIDDEN)
-    exporter.add_shape(hidden, layer="hidden")
     exporter.add_shape(visible, layer="visible")
     exporter.write(path)
 
@@ -342,6 +459,8 @@ def _export_output_verification(
     *,
     multiconnect_rail: _DisplayShape,
     snap_threads: _DisplayShape,
+    snap_body: _DisplayShape,
+    expanding_snap: _DisplayShape,
     verification_dir: Path,
 ) -> tuple[Path, ...]:
     return (
@@ -358,6 +477,20 @@ def _export_output_verification(
             title="snap threads verification",
             gallery_filename="gallery.html",
             views=_SNAP_THREAD_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            snap_body,
+            verification_dir / "snap_body",
+            title="snap body verification",
+            gallery_filename="gallery.html",
+            views=_SNAP_BODY_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            expanding_snap,
+            verification_dir / "expanding_snap",
+            title="expanding snap verification",
+            gallery_filename="gallery.html",
+            views=_EXPANDING_SNAP_VERIFICATION_VIEWS,
         ),
     )
 
@@ -382,20 +515,24 @@ def main() -> None:
     args = _parse_args()
     config = _load_config(args.config)
     output_dir = _output_dir(config)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    verification_dir = _verification_dir(config)
+    _prepare_output_dir(output_dir)
+    verification_dir = output_dir / "verification"
 
     adjacent_connector_config = _adjacent_connector_config(config)
     slot_delete_tool_config = adjacent_connector_config.slot_delete_tool
     board_config = _grid_config(config, slot_delete_tool_config)
     multiconnect_config = _multiconnect_config(config)
     snap_thread_config = _snap_thread_config(config)
+    snap_body_config = _snap_body_config(config)
+    expanding_snap_config = _expanding_snap_config(snap_body_config, snap_thread_config, config)
     multiconnect_profile = build_multiconnect_profile(multiconnect_config)
     multiconnect_rail = build_multiconnect_rail(multiconnect_config)
     multiconnect_receiver = build_multiconnect_receiver(multiconnect_config)
     multiconnect_backer = build_multiconnect_backer(multiconnect_config)
     multiconnect_delete_tool = build_multiconnect_delete_tool(multiconnect_config)
     snap_threads = build_snap_threads(snap_thread_config)
+    snap_body = build_snap_body(snap_body_config)
+    expanding_snap = build_expanding_snap(expanding_snap_config)
     grid = build_open_grid(board_config)
     slot_delete_tool = build_connector_slot_delete_tool(slot_delete_tool_config)
     adjacent_connector = build_adjacent_grid_connector(adjacent_connector_config)
@@ -408,6 +545,8 @@ def main() -> None:
     multiconnect_backer_path = output_dir / "multiconnect_backer.step"
     multiconnect_delete_tool_path = output_dir / "multiconnect_delete_tool.step"
     snap_threads_path = output_dir / "snap_threads.step"
+    snap_body_path = output_dir / "snap_body.step"
+    expanding_snap_path = output_dir / "expanding_snap.step"
     bd.export_step(grid, grid_path)
     bd.export_step(slot_delete_tool, slot_delete_tool_path)
     bd.export_step(adjacent_connector, adjacent_connector_path)
@@ -416,9 +555,13 @@ def main() -> None:
     bd.export_step(multiconnect_backer, multiconnect_backer_path)
     bd.export_step(multiconnect_delete_tool, multiconnect_delete_tool_path)
     bd.export_step(snap_threads, snap_threads_path)
+    bd.export_step(snap_body, snap_body_path)
+    bd.export_step(expanding_snap, expanding_snap_path)
     verification_paths = _export_output_verification(
         multiconnect_rail=multiconnect_rail,
         snap_threads=snap_threads,
+        snap_body=snap_body,
+        expanding_snap=expanding_snap,
         verification_dir=verification_dir,
     )
 
@@ -433,6 +576,8 @@ def main() -> None:
             multiconnect_backer,
             multiconnect_delete_tool,
             snap_threads,
+            snap_body,
+            expanding_snap,
             viewer,
         )
 
@@ -445,6 +590,8 @@ def main() -> None:
         multiconnect_backer_path,
         multiconnect_delete_tool_path,
         snap_threads_path,
+        snap_body_path,
+        expanding_snap_path,
         *verification_paths,
     )
     print(
@@ -453,6 +600,8 @@ def main() -> None:
         + f"\nadjacent_connector={adjacent_connector_config!r}"
         + f"\nmulticonnect={multiconnect_config!r}"
         + f"\nsnap_threads={snap_thread_config!r}"
+        + f"\nsnap_body={snap_body_config!r}"
+        + f"\nexpanding_snap={expanding_snap_config!r}"
         + f"\nmulticonnect_profile={multiconnect_profile!r}"
     )
 

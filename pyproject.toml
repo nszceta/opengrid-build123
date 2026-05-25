@@ -29,7 +29,7 @@ build123d = { git = "https://github.com/gumyr/build123d" }
 where = ["src"]
 
 [tool.pytest.ini_options]
-addopts = ["-n", "8"]
+addopts = ["-n", "2"]
 filterwarnings = [
     "ignore:Due to '_pack_', the '.*' Structure will use memory layout compatible with MSVC \\(Windows\\).*:DeprecationWarning:lib3mf\\.Lib3MF",
 ]
