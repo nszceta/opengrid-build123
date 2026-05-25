@@ -165,6 +165,35 @@ def test_connector_holes_remove_material_without_changing_board_envelope() -> No
     assert _volume(cut) < _volume(base)
 
 
+@pytest.mark.parametrize(
+    ("kind", "z"),
+    [
+        (BoardKind.FULL, 3.4),
+        (BoardKind.LITE, 1.8),
+        (BoardKind.HEAVY, 6.9),
+    ],
+)
+def test_connector_cutouts_leave_inner_side_wall_closed(kind: BoardKind, z: float) -> None:
+    config = GridConfig(
+        kind=kind,
+        board_width=2,
+        board_height=2,
+        chamfers=ChamferMode.NONE,
+        connector_holes=True,
+        screw_mounting=ScrewMounting.NONE,
+    )
+    board = build_open_grid(config)
+
+    assert not board.is_inside((27.5, 0.0, z))
+    assert board.is_inside((26.8, 0.0, z))
+    assert not board.is_inside((-27.5, 0.0, z))
+    assert board.is_inside((-26.8, 0.0, z))
+    assert not board.is_inside((0.0, 27.5, z))
+    assert board.is_inside((0.0, 26.8, z))
+    assert not board.is_inside((0.0, -27.5, z))
+    assert board.is_inside((0.0, -26.8, z))
+
+
 def test_connector_slot_delete_tool_height_config_changes_removed_material() -> None:
     default_cut = GridConfig(
         kind=BoardKind.FULL,
