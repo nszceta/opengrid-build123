@@ -6,22 +6,14 @@ A build123d conversion of the parametric openGrid board generator from the refer
 
 Implemented:
 
-- Full, Lite, and Heavy openGrid boards
-- Parametric board width/height and tile size
-- OpenSCAD-style I-beam tile profile and corner transitions
-- Overall corner chamfers
-- Screw mounting modes
-- Side connector snap slots centered in the board side height
-- Lite adhesive base
-- Stacked tiles with interface layers
-- Fill-space generation modes
+- Full, Lite, and Heavy openGrid boards, including fill-space modes
+- Parametric board width/height, tile size, stacking, chamfers, screw mounting, connector slots, and Lite adhesive backing
 - Adjacent-grid connector slot/delete-tool and positive connector primitives
 - Snap thread, snap body, and self-expanding snap primitives
-- Assembled snap products with openConnect or Multiconnect heads
-- Snap-thread-backed openConnect and Multiconnect screws
-- Cosmetic text engraving for product-level snap and screw builders
-- STL export CLI
-- OCP VS Code viewer example
+- Assembled snap products with bare, basic-thread, self-expanding, openConnect, or Multiconnect attachments
+- Snap-thread-backed openConnect and Multiconnect screws, openConnect heads, Multiconnect heads, and cosmetic text engraving
+- Multiconnect profile, rail, receiver, backer, and rail-delete-tool builders
+- STEP/STL export, OCP VS Code viewer example, and SVG verification galleries
 
 ## Requirements
 
@@ -52,40 +44,61 @@ Supported `--kind` values:
 - `Lite`
 - `Heavy`
 
-## Export STEP files and view in OCP VS Code
+## Export STEP files and visual verification galleries
 
-The unified example reads `examples/config.yaml` by default. Edit that file to configure boards, adjacent-grid connector objects, Multiconnect rails/receivers/backers, snap primitives, assembled snap products, snap-thread-backed screws, STEP output, SVG verification, and optional OCP viewer display.
+The unified example reads `examples/config.yaml` by default. Edit that file to configure boards, adjacent-grid connector objects, Multiconnect rails/receivers/backers/delete tools, snap primitives, assembled snap products, snap-thread-backed screws, STEP output, SVG verification, and optional OCP viewer display.
 
-Export the configured objects as one STEP file per object:
-
-```bash
-uv run python examples/main.py
-```
-
-Use another YAML config file with:
+Export the configured objects as one STEP file per object and generate visual verification galleries:
 
 ```bash
-uv run python examples/main.py --config examples/config.yaml
+uv run examples/main.py --config examples/config.yaml
 ```
 
-To display in OCP CAD Viewer, set `viewer.show: true` in the YAML and open the OCP CAD Viewer panel in VS Code before running the script.
+Verification SVGs are grouped by component under `output/verification/<component>/gallery.html`. Each gallery contains multiple views for every defined variant of that component, for example:
+
+```text
+output/verification/
+  opengrid_board/gallery.html
+  snap_threads/gallery.html
+  snap_body/gallery.html
+  expanding_snap/gallery.html
+  multiconnect_rail/gallery.html
+  openconnect_screw/gallery.html
+```
+
+Use `output/verification/<component>/gallery.html` for visual inspection after geometry-sensitive changes. To display the configured objects in OCP CAD Viewer, set `viewer.show: true` in the YAML and open the OCP CAD Viewer panel in VS Code before running the script.
 
 ## Python API
 
 ```python
-from opengrid_build123 import BoardKind, ChamferMode, GridConfig, ScrewMounting, build_open_grid, export_grid
+from pathlib import Path
 
-config = GridConfig(
-    kind=BoardKind.FULL,
-    board_width=2,
-    board_height=2,
-    chamfers=ChamferMode.CORNERS,
-    connector_holes=True,
-    screw_mounting=ScrewMounting.CORNERS,
+from opengrid_build123 import (
+    BoardKind,
+    GridConfig,
+    MulticonnectConfig,
+    OpenGridSnapConfig,
+    OpenGridSnapKind,
+    SnapBodyConfig,
+    SnapThreadConfig,
+    build_multiconnect_rail,
+    build_open_grid,
+    build_opengrid_snap,
+    export_grid,
 )
 
-part = build_open_grid(config)
-export_grid(config, "opengrid_full_2x2.stl")
+board_config = GridConfig(kind=BoardKind.FULL, board_width=2, board_height=2)
+board = build_open_grid(board_config)
+export_grid(board_config, Path("opengrid_full_2x2.stl"))
+
+snap = build_opengrid_snap(
+    OpenGridSnapConfig(
+        kind=OpenGridSnapKind.SELF_EXPANDING_THREADS,
+        snap_body=SnapBodyConfig(),
+        threads=SnapThreadConfig(),
+    )
+)
+rail = build_multiconnect_rail(MulticonnectConfig(length=56.0))
 ```
 
 ## Verification
@@ -103,9 +116,10 @@ Current test coverage checks:
 - Overall corner chamfers cutting through the full tile height
 - Connector snap slots centered in side height
 - Stacked interface layer spacing
-- Complete-tile fill-space placement
-- Snap thread, snap body, expanding snap, assembled snap, screw, and engraving behavior
-- SVG verification gallery generation under `output/verification/<object>/gallery.html`
+- Complete-tile and available-space fill placement
+- Snap thread, snap body, expanding snap, assembled snap, screw, engraving, and Multiconnect behavior
+- Reference-source parity checks for snap body, expanding snap, and Multiconnect source dimensions/envelopes
+- Variant SVG verification galleries under `output/verification/<component>/gallery.html`
 
 ## Project layout
 

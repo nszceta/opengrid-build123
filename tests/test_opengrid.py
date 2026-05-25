@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import fields as dataclass_fields
+import re
 from pathlib import Path
 import importlib.util
 import math
@@ -63,6 +64,11 @@ from opengrid_build123.opengrid import (
 
 _EXAMPLE_CONFIG_PATH = Path(__file__).resolve().parents[1] / "examples" / "config.yaml"
 _EXAMPLE_MAIN_PATH = Path(__file__).resolve().parents[1] / "examples" / "main.py"
+_REFERENCE_ROOT = Path(__file__).resolve().parents[2] / "reference_repos"
+_OPENGRID_BASE_PATH = _REFERENCE_ROOT / "opengrid-projects" / "lib" / "opengrid_base.scad"
+_SNAP_LIB_PATH = _REFERENCE_ROOT / "opengrid-projects" / "lib" / "opengrid_snap_lib.scad"
+_EXPANDING_SNAP_PATH = _REFERENCE_ROOT / "opengrid-projects" / "opengrid_expanding_snap.scad"
+_MULTICONNECT_GENERATOR_PATH = _REFERENCE_ROOT / "QuackWorks" / "Modules" / "multiconnectGenerator.scad"
 
 def _bbox_size(config: GridConfig) -> tuple[float, float, float]:
     size = build_open_grid(config).bounding_box().size
@@ -120,6 +126,47 @@ def _mapping_section(config: dict[str, object], name: str) -> dict[str, object]:
     section = config[name]
     assert isinstance(section, dict)
     return section
+def _reference_source(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _reference_number(source: str, name: str) -> float:
+    match = re.search(rf"\b{re.escape(name)}\s*=\s*(-?\d+(?:\.\d+)?)\b", source)
+    assert match is not None, f"Missing numeric reference `{name}`"
+    return float(match.group(1))
+
+
+def _reference_multiconnect_specs(source: str, name: str) -> tuple[float, float, float, float, float, float]:
+    match = re.search(rf"\b{re.escape(name)}\s*=\s*\[([^\]]+)\];", source)
+    assert match is not None, f"Missing Multiconnect reference spec `{name}`"
+    parts = tuple(float(value.strip()) for value in match.group(1).split(","))
+    assert len(parts) == 6
+    return parts
+
+
+def _front_side_cut_probe(config: SnapBodyConfig) -> tuple[float, float, float]:
+    return (
+        0.0,
+        -config.height / 2.0 + config.side_cut_depth / 2.0,
+        config.thickness - config.side_cut_offset_to_top - config.side_cut_thickness / 2.0,
+    )
+
+
+def _front_bottom_cut_probe(config: SnapBodyConfig) -> tuple[float, float, float]:
+    return (
+        0.0,
+        -config.height / 2.0 + config.bottom_cut_offset_to_edge + config.bottom_cut_thickness / 2.0,
+        config.thickness / 2.0,
+    )
+
+
+def _back_bottom_cut_probe(config: SnapBodyConfig) -> tuple[float, float, float]:
+    return (
+        0.0,
+        config.height / 2.0 - config.bottom_cut_offset_to_edge - config.bottom_cut_thickness / 2.0,
+        config.thickness / 2.0,
+    )
+
 
 
 def _assert_points_close(actual: tuple[tuple[float, float], ...], expected: tuple[tuple[float, float], ...]) -> None:
@@ -320,14 +367,41 @@ def test_snap_body_config_validation_rejects_invalid_dimensions(kwargs: dict[str
 
 def test_snap_body_source_defaults_match_reference_constants() -> None:
     config = SnapBodyConfig()
+    base_source = _reference_source(_OPENGRID_BASE_PATH)
+    snap_source = _reference_source(_SNAP_LIB_PATH)
+    corner_outer_diagonal = 2.7 + 1.0 / math.sqrt(2.0)
 
-    assert config.width == pytest.approx(24.8)
-    assert config.height == pytest.approx(24.8)
-    assert config.thickness == pytest.approx(6.8)
-    assert config.corner_chamfer == pytest.approx((2.7 + 1.0 / math.sqrt(2.0)) * math.sqrt(2.0))
-    assert config.cut_width_inset == pytest.approx(6.2)
-    assert config.directional_nub_depth == pytest.approx(0.8)
-    assert config.notch_gap_inset == pytest.approx(1.8)
+    assert config.width == pytest.approx(_reference_number(base_source, "OG_SNAP_WIDTH"))
+    assert config.height == pytest.approx(_reference_number(base_source, "OG_SNAP_WIDTH"))
+    assert config.thickness == pytest.approx(_reference_number(base_source, "OG_STANDARD_THICKNESS"))
+    assert config.corner_chamfer == pytest.approx(corner_outer_diagonal * math.sqrt(2.0))
+    assert config.cut_width_inset == pytest.approx(_reference_number(snap_source, "cut_width_inset"))
+    assert config.directional_nub_depth == pytest.approx(_reference_number(snap_source, "directional_nub_depth"))
+    assert config.notch_gap_inset == pytest.approx(_reference_number(snap_source, "notch_gap_inset"))
+def test_snap_body_cut_rules_match_reference_source_behavior() -> None:
+    snap_source = _reference_source(_SNAP_LIB_PATH)
+    assert "disable_front_side_cut\", !in_list(list=disable_features, val=\"snap_uninstall_notch\")" in snap_source
+
+    without_notch_config = SnapBodyConfig(enable_uninstall_notch=False)
+    with_notch = build_snap_body(SnapBodyConfig(enable_uninstall_notch=True))
+    without_notch = build_snap_body(without_notch_config)
+
+    assert not with_notch.is_inside(_front_side_cut_probe(without_notch_config))
+    assert without_notch.is_inside(_front_side_cut_probe(without_notch_config))
+
+
+def test_snap_body_directional_back_bottom_cut_matches_reference_source_behavior() -> None:
+    snap_source = _reference_source(_SNAP_LIB_PATH)
+    assert '_snap_body_shape == "Directional" && i == BACK' in snap_source
+
+    directional_config = SnapBodyConfig(body_shape=SnapBodyShape.DIRECTIONAL)
+    symmetric_config = SnapBodyConfig(body_shape=SnapBodyShape.SYMMETRIC)
+    directional = build_snap_body(directional_config)
+    symmetric = build_snap_body(symmetric_config)
+
+    assert directional.is_inside(_back_bottom_cut_probe(directional_config))
+    assert not symmetric.is_inside(_back_bottom_cut_probe(symmetric_config))
+
 
 
 @pytest.mark.parametrize(
@@ -414,14 +488,26 @@ def test_expanding_snap_config_validation_rejects_invalid_dimensions(kwargs: dic
 
 def test_expanding_snap_source_defaults_match_reference_constants() -> None:
     config = ExpandingSnapConfig()
+    expanding_source = _reference_source(_EXPANDING_SNAP_PATH)
+    snap_source = _reference_source(_SNAP_LIB_PATH)
 
-    assert config.expand_distance_standard == pytest.approx(1.0)
-    assert config.expand_distance_lite == pytest.approx(1.2)
+    assert config.expand_distance_standard == pytest.approx(_reference_number(expanding_source, "expand_distance_standard"))
+    assert config.expand_distance_lite == pytest.approx(_reference_number(expanding_source, "expand_distance_lite"))
     assert config.expand_entry_height_blunt == pytest.approx(1.0)
     assert config.expand_end_height_standard == pytest.approx(2.0)
-    assert config.expand_split_angle == pytest.approx(45.0)
-    assert config.spring_thickness == pytest.approx(1.26)
-    assert config.spring_gap == pytest.approx(0.42)
+    assert config.expand_split_angle == pytest.approx(_reference_number(expanding_source, "expand_split_angle"))
+    assert config.spring_thickness == pytest.approx(_reference_number(snap_source, "spring_thickness"))
+    assert config.spring_gap == pytest.approx(_reference_number(snap_source, "spring_gap"))
+def test_expanding_snap_omits_source_side_and_bottom_cuts() -> None:
+    snap_source = _reference_source(_SNAP_LIB_PATH)
+    assert '"disable_all_side_cut", true, "disable_all_bottom_cut", true' in snap_source
+
+    snap_body = SnapBodyConfig(enable_uninstall_notch=False)
+    expanding = build_expanding_snap(ExpandingSnapConfig(snap_body=snap_body))
+
+    assert expanding.is_inside(_front_side_cut_probe(snap_body))
+    assert expanding.is_inside(_front_bottom_cut_probe(snap_body))
+
 
 
 def test_expanding_snap_preserves_body_envelope_and_removes_threaded_core() -> None:
@@ -573,6 +659,33 @@ def test_multiconnect_profile_presets_match_source_dimensions(
         receiver,
         _expected_multiconnect_coords(radius, capture_depth, dovetail_depth, stem_depth, receiver_offset),
     )
+def test_multiconnect_profiles_match_reference_generator_specs() -> None:
+    source = _reference_source(_MULTICONNECT_GENERATOR_PATH)
+    references = (
+        (MulticonnectProfile.STANDARD, "standardSpecs"),
+        (MulticonnectProfile.JR, "jrSpecs"),
+        (MulticonnectProfile.MINI, "miniSpecs"),
+        (MulticonnectProfile.MULTIPOINT_BETA, "multipointBeta"),
+    )
+
+    for profile, source_name in references:
+        radius, capture_depth, dovetail_depth, stem_depth, receiver_offset, _dimple_radius = (
+            _reference_multiconnect_specs(source, source_name)
+        )
+        male = build_multiconnect_profile(
+            MulticonnectConfig(profile=profile, part_kind=MulticonnectPartKind.CONNECTOR_RAIL)
+        )
+        receiver = build_multiconnect_profile(
+            MulticonnectConfig(profile=profile, part_kind=MulticonnectPartKind.RECEIVER_OPEN_ENDED)
+        )
+
+        _assert_points_close(male, _expected_multiconnect_coords(radius, capture_depth, dovetail_depth, stem_depth, 0.0))
+        _assert_points_close(
+            receiver,
+            _expected_multiconnect_coords(radius, capture_depth, dovetail_depth, stem_depth, receiver_offset),
+        )
+
+
 
 
 @pytest.mark.parametrize(
@@ -634,6 +747,46 @@ def test_multiconnect_receiver_contains_single_offset_slot() -> None:
 
     assert (float(size.X), float(size.Y), float(size.Z)) == pytest.approx((25.3, 6.15, 40.0), abs=0.05)
     assert receiver.volume < 25.3 * 6.15 * 40.0
+def test_multiconnect_receiver_and_backer_envelopes_match_reference_generator_blocks() -> None:
+    source = _reference_source(_MULTICONNECT_GENERATOR_PATH)
+    assert "cuboid([maxX(profile[0])*2+Receiver_Side_Wall_Thickness*2" in source
+    assert "xcopies(n=floor(Width/Grid_Size), spacing = Grid_Size)" in source
+
+    radius, capture_depth, dovetail_depth, stem_depth, receiver_offset, _dimple_radius = (
+        _reference_multiconnect_specs(source, "standardSpecs")
+    )
+    receiver_profile = _expected_multiconnect_coords(
+        radius,
+        capture_depth,
+        dovetail_depth,
+        stem_depth,
+        receiver_offset,
+    )
+    slot_width = max(x for x, _ in receiver_profile) * 2.0
+    slot_depth = max(y for _, y in receiver_profile)
+    side_wall = _reference_number(source, "Receiver_Side_Wall_Thickness")
+    back_thickness = _reference_number(source, "Receiver_Back_Thickness")
+    length = 40.0
+    width = 75.0
+
+    receiver = build_multiconnect_receiver(
+        MulticonnectConfig(length=length, rounding=MulticonnectRounding.NONE, on_ramps_enabled=False)
+    )
+    backer = build_multiconnect_backer(
+        MulticonnectConfig(width=width, length=length, rounding=MulticonnectRounding.NONE, on_ramps_enabled=False)
+    )
+
+    receiver_size = receiver.bounding_box().size
+    backer_size = backer.bounding_box().size
+    assert (float(receiver_size.X), float(receiver_size.Y), float(receiver_size.Z)) == pytest.approx(
+        (slot_width + side_wall * 2.0, slot_depth + back_thickness, length),
+        abs=0.05,
+    )
+    assert (float(backer_size.X), float(backer_size.Y), float(backer_size.Z)) == pytest.approx(
+        (width, slot_depth + back_thickness, length),
+        abs=0.05,
+    )
+
 
 
 def test_multiconnect_backer_slot_count_uses_opengrid_spacing() -> None:
@@ -674,6 +827,44 @@ def test_output_dir_rejects_blank_directory() -> None:
         example_main._output_dir({"output": {"directory": "   "}})
 
 
+def test_variant_verification_defines_every_public_enum_variant() -> None:
+    example_main = _example_main()
+    board_config = GridConfig(
+        board_width=1,
+        board_height=1,
+        chamfers=ChamferMode.NONE,
+        connector_holes=False,
+        screw_mounting=ScrewMounting.NONE,
+    )
+    multiconnect_config = MulticonnectConfig(length=12.0, width=28.0, rounding=MulticonnectRounding.NONE, on_ramps_enabled=False)
+    snap_threads = SnapThreadConfig(height=4.0)
+    snap_body = SnapBodyConfig(thickness=4.0)
+    expanding = ExpandingSnapConfig(snap_body=snap_body, threads=snap_threads)
+
+    assert {variant for variant, _shape, _views in example_main._board_verification_variants(board_config)} >= {
+        example_main._slug(kind.value) for kind in BoardKind
+    } | {f"fill_{example_main._slug(mode.value)}" for mode in FillSpaceMode}
+    assert {variant for variant, _shape, _views in example_main._multiconnect_rail_verification_variants(multiconnect_config)} >= {
+        f"profile_{example_main._slug(profile.value)}" for profile in MulticonnectProfile
+    } | {f"rounding_{example_main._slug(rounding.value)}" for rounding in MulticonnectRounding}
+    assert {variant for variant, _shape, _views in example_main._snap_thread_verification_variants(snap_threads)} >= {
+        f"type_{example_main._slug(thread_type.value)}" for thread_type in ThreadType
+    }
+    assert {variant for variant, _shape, _views in example_main._snap_body_verification_variants(snap_body)} >= {
+        f"shape_{example_main._slug(shape.value)}" for shape in SnapBodyShape
+    }
+    assert {variant for variant, _shape, _views in example_main._expanding_snap_verification_variants(expanding)} >= {
+        f"threads_{example_main._slug(thread_type.value)}" for thread_type in ThreadType
+    } | {f"shape_{example_main._slug(shape.value)}" for shape in SnapBodyShape}
+    assert {variant for variant, _shape, _views in example_main._opengrid_snap_verification_variants(OpenGridSnapConfig(snap_body=snap_body, threads=snap_threads, expanding_snap=expanding))} == {
+        f"kind_{example_main._slug(kind.value)}" for kind in OpenGridSnapKind
+    }
+    assert {variant for variant, _shape, _views in example_main._multiconnect_head_verification_variants(MulticonnectHeadConfig(), ConnectorSlotConfig())} == {
+        "top_coin_slot",
+        "top_dimple",
+        "top_none",
+    }
+
 def test_prepare_output_dir_removes_stale_output_tree(tmp_path: Path) -> None:
     output_dir = tmp_path / "output"
     stale_file = output_dir / "stale.txt"
@@ -692,48 +883,56 @@ def test_output_verification_exports_shape_svgs_into_named_subdirectories(tmp_pa
 
     example_main = _example_main()
     paths = example_main._export_output_verification(
+        grid=rail,
+        slot_delete_tool=rail,
+        adjacent_connector=rail,
         multiconnect_rail=rail,
+        multiconnect_receiver=rail,
+        multiconnect_backer=rail,
+        multiconnect_delete_tool=rail,
         snap_threads=rail,
         snap_body=rail,
         expanding_snap=rail,
+        openconnect_head=rail,
+        multiconnect_head=rail,
         opengrid_snap=rail,
         openconnect_screw=rail,
         multiconnect_screw=rail,
         verification_dir=tmp_path,
     )
 
-    assert tuple(path.relative_to(tmp_path) for path in paths) == (
-        Path("multiconnect_rail/multiconnect_rail_iso.svg"),
-        Path("multiconnect_rail/multiconnect_rail_back.svg"),
-        Path("multiconnect_rail/multiconnect_rail_top.svg"),
-        Path("multiconnect_rail/gallery.html"),
-        Path("snap_threads/snap_threads_iso.svg"),
-        Path("snap_threads/snap_threads_front.svg"),
-        Path("snap_threads/snap_threads_top.svg"),
-        Path("snap_threads/gallery.html"),
-        Path("snap_body/snap_body_iso.svg"),
-        Path("snap_body/snap_body_front.svg"),
-        Path("snap_body/snap_body_top.svg"),
-        Path("snap_body/gallery.html"),
-        Path("expanding_snap/expanding_snap_iso.svg"),
-        Path("expanding_snap/expanding_snap_front.svg"),
-        Path("expanding_snap/expanding_snap_top.svg"),
-        Path("expanding_snap/gallery.html"),
-        Path("opengrid_snap/opengrid_snap_iso.svg"),
-        Path("opengrid_snap/opengrid_snap_front.svg"),
-        Path("opengrid_snap/opengrid_snap_top.svg"),
-        Path("opengrid_snap/gallery.html"),
-        Path("openconnect_screw/openconnect_screw_iso.svg"),
-        Path("openconnect_screw/openconnect_screw_front.svg"),
-        Path("openconnect_screw/openconnect_screw_top.svg"),
-        Path("openconnect_screw/gallery.html"),
-        Path("multiconnect_screw/multiconnect_screw_iso.svg"),
-        Path("multiconnect_screw/multiconnect_screw_front.svg"),
-        Path("multiconnect_screw/multiconnect_screw_top.svg"),
-        Path("multiconnect_screw/gallery.html"),
+    expected_components = (
+        "opengrid_board",
+        "adjacent_grid_connector_slot_delete_tool",
+        "adjacent_grid_connector",
+        "multiconnect_rail",
+        "multiconnect_receiver",
+        "multiconnect_backer",
+        "multiconnect_delete_tool",
+        "snap_threads",
+        "snap_body",
+        "expanding_snap",
+        "openconnect_head",
+        "multiconnect_head",
+        "opengrid_snap",
+        "openconnect_screw",
+        "multiconnect_screw",
     )
+    relative_paths = tuple(path.relative_to(tmp_path) for path in paths)
+
+    assert {path.parts[0] for path in relative_paths} == set(expected_components)
+    for component in expected_components:
+        component_paths = [path for path in relative_paths if path.parts[0] == component]
+        svg_paths = [path for path in component_paths if path.suffix == ".svg"]
+        assert len(svg_paths) >= 3
+        assert Path(component, "gallery.html") in component_paths
+        assert all(path.name.startswith(component) for path in svg_paths)
     for path in paths:
         assert path.stat().st_size > 0
+        if path.suffix == ".svg":
+            svg = path.read_text(encoding="utf-8")
+            assert 'stroke-width="0.01"' not in svg
+            assert 'stroke-width="0.08"' in svg
     assert 'id="hidden"' not in (tmp_path / "snap_body" / "snap_body_top.svg").read_text(encoding="utf-8")
     gallery = (tmp_path / "multiconnect_rail" / "gallery.html").read_text(encoding="utf-8")
     assert "multiconnect_rail_back.svg" in gallery

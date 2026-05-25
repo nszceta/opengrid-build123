@@ -60,12 +60,50 @@ from opengrid_build123 import (
 _DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 _Vector3 = tuple[float, float, float]
 _VerificationView = tuple[str, _Vector3, _Vector3]
+_VISIBLE_SVG_STROKE_WIDTH = "0.08"
+
+
+_BOARD_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("opengrid_board_iso.svg", (72.0, -96.0, 64.0), (0.0, 0.0, 1.0)),
+    ("opengrid_board_front.svg", (0.0, -128.0, 4.0), (0.0, 0.0, 1.0)),
+    ("opengrid_board_top.svg", (0.0, 0.0, 128.0), (0.0, 1.0, 0.0)),
+)
+
+_ADJACENT_SLOT_DELETE_TOOL_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("adjacent_grid_connector_slot_delete_tool_iso.svg", (18.0, -24.0, 18.0), (0.0, 0.0, 1.0)),
+    ("adjacent_grid_connector_slot_delete_tool_front.svg", (0.0, -36.0, 2.0), (0.0, 0.0, 1.0)),
+    ("adjacent_grid_connector_slot_delete_tool_top.svg", (0.0, 0.0, 36.0), (0.0, 1.0, 0.0)),
+)
+
+_ADJACENT_CONNECTOR_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("adjacent_grid_connector_iso.svg", (28.0, -36.0, 18.0), (0.0, 0.0, 1.0)),
+    ("adjacent_grid_connector_front.svg", (0.0, -48.0, 2.0), (0.0, 0.0, 1.0)),
+    ("adjacent_grid_connector_top.svg", (0.0, 0.0, 48.0), (0.0, 1.0, 0.0)),
+)
 
 _MULTICONNECT_RAIL_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
     ("multiconnect_rail_iso.svg", (48.0, -72.0, 56.0), (0.0, 0.0, 1.0)),
     ("multiconnect_rail_back.svg", (0.0, -96.0, 35.0), (0.0, 0.0, 1.0)),
     ("multiconnect_rail_top.svg", (0.0, 0.0, 96.0), (0.0, 1.0, 0.0)),
 )
+_MULTICONNECT_RECEIVER_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("multiconnect_receiver_iso.svg", (48.0, -72.0, 56.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_receiver_back.svg", (0.0, -96.0, 35.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_receiver_top.svg", (0.0, 0.0, 96.0), (0.0, 1.0, 0.0)),
+)
+
+_MULTICONNECT_BACKER_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("multiconnect_backer_iso.svg", (72.0, -96.0, 64.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_backer_back.svg", (0.0, -128.0, 35.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_backer_top.svg", (0.0, 0.0, 128.0), (0.0, 1.0, 0.0)),
+)
+
+_MULTICONNECT_DELETE_TOOL_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("multiconnect_delete_tool_iso.svg", (48.0, -72.0, 56.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_delete_tool_back.svg", (0.0, -96.0, 35.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_delete_tool_top.svg", (0.0, 0.0, 96.0), (0.0, 1.0, 0.0)),
+)
+
 
 _SNAP_THREAD_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
     ("snap_threads_iso.svg", (28.0, -36.0, 24.0), (0.0, 0.0, 1.0)),
@@ -96,6 +134,17 @@ _OPENCONNECT_SCREW_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
     ("openconnect_screw_front.svg", (0.0, -64.0, 8.0), (0.0, 0.0, 1.0)),
     ("openconnect_screw_top.svg", (0.0, 0.0, 64.0), (0.0, 1.0, 0.0)),
 )
+_OPENCONNECT_HEAD_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("openconnect_head_iso.svg", (28.0, -40.0, 20.0), (0.0, 0.0, 1.0)),
+    ("openconnect_head_front.svg", (0.0, -56.0, 3.0), (0.0, 0.0, 1.0)),
+    ("openconnect_head_top.svg", (0.0, 0.0, 56.0), (0.0, 1.0, 0.0)),
+)
+
+_MULTICONNECT_HEAD_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("multiconnect_head_iso.svg", (28.0, -40.0, 20.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_head_front.svg", (0.0, -56.0, 3.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_head_top.svg", (0.0, 0.0, 56.0), (0.0, 1.0, 0.0)),
+)
 
 _MULTICONNECT_SCREW_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
     ("multiconnect_screw_iso.svg", (32.0, -48.0, 28.0), (0.0, 0.0, 1.0)),
@@ -105,6 +154,7 @@ _MULTICONNECT_SCREW_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
 
 class _DisplayShape(Protocol):
     def translate(self, vector: tuple[float, float, float]) -> object: ...
+_VerificationVariant = tuple[str, _DisplayShape, tuple[_VerificationView, ...]]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -592,6 +642,14 @@ def _export_svg_projection(
     exporter.add_layer("visible", line_color=bd.Color("black"), line_weight=0.08)
     exporter.add_shape(visible, layer="visible")
     exporter.write(path)
+    _make_svg_projection_legible(path)
+
+
+def _make_svg_projection_legible(path: Path) -> None:
+    svg = path.read_text(encoding="utf-8")
+    svg = svg.replace('stroke-width="0.01"', f'stroke-width="{_VISIBLE_SVG_STROKE_WIDTH}"')
+    svg = svg.replace('stroke="rgb(0,0,0)"', f'stroke="rgb(0,0,0)" stroke-width="{_VISIBLE_SVG_STROKE_WIDTH}"', 1) if "stroke-width" not in svg else svg
+    path.write_text(svg, encoding="utf-8")
 
 
 def _export_shape_verification(
@@ -611,14 +669,59 @@ def _export_shape_verification(
     gallery_path = verification_dir / gallery_filename
     _write_verification_gallery(title, paths, gallery_path)
     return (*paths, gallery_path)
+def _slug(value: str) -> str:
+    return value.lower().replace(" ", "_").replace("-", "_").replace(".", "").replace("(", "").replace(")", "")
+
+
+def _variant_views(component: str, variant: str, views: tuple[_VerificationView, ...]) -> tuple[_VerificationView, ...]:
+    prefix = f"{component}_"
+    return tuple(
+        (
+            f"{component}_{variant}_{filename.removeprefix(prefix)}",
+            origin,
+            up,
+        )
+        for filename, origin, up in views
+    )
+
+
+def _export_component_variant_verification(
+    variants: tuple[_VerificationVariant, ...],
+    component_dir: Path,
+    title: str,
+) -> tuple[Path, ...]:
+    component = component_dir.name
+    svg_paths: list[Path] = []
+    component_dir.mkdir(parents=True, exist_ok=True)
+    for variant, shape, views in variants:
+        for filename, origin, up in _variant_views(component, variant, views):
+            path = component_dir / filename
+            _export_svg_projection(shape, path, origin, up)
+            svg_paths.append(path)
+    gallery_path = component_dir / "gallery.html"
+    _write_verification_gallery(title, svg_paths, gallery_path)
+    return (*svg_paths, gallery_path)
+
+
+def _multiconnect_profile_variants() -> tuple[MulticonnectProfile, ...]:
+    return tuple(MulticonnectProfile)
+
 
 
 def _export_output_verification(
     *,
+    grid: _DisplayShape,
+    slot_delete_tool: _DisplayShape,
+    adjacent_connector: _DisplayShape,
     multiconnect_rail: _DisplayShape,
+    multiconnect_receiver: _DisplayShape,
+    multiconnect_backer: _DisplayShape,
+    multiconnect_delete_tool: _DisplayShape,
     snap_threads: _DisplayShape,
     snap_body: _DisplayShape,
     expanding_snap: _DisplayShape,
+    openconnect_head: _DisplayShape,
+    multiconnect_head: _DisplayShape,
     opengrid_snap: _DisplayShape,
     openconnect_screw: _DisplayShape,
     multiconnect_screw: _DisplayShape,
@@ -626,11 +729,53 @@ def _export_output_verification(
 ) -> tuple[Path, ...]:
     return (
         *_export_shape_verification(
+            grid,
+            verification_dir / "opengrid_board",
+            title="openGrid board verification",
+            gallery_filename="gallery.html",
+            views=_BOARD_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            slot_delete_tool,
+            verification_dir / "adjacent_grid_connector_slot_delete_tool",
+            title="adjacent-grid connector slot delete tool verification",
+            gallery_filename="gallery.html",
+            views=_ADJACENT_SLOT_DELETE_TOOL_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            adjacent_connector,
+            verification_dir / "adjacent_grid_connector",
+            title="adjacent-grid connector verification",
+            gallery_filename="gallery.html",
+            views=_ADJACENT_CONNECTOR_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
             multiconnect_rail,
             verification_dir / "multiconnect_rail",
             title="Multiconnect rail verification",
             gallery_filename="gallery.html",
             views=_MULTICONNECT_RAIL_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            multiconnect_receiver,
+            verification_dir / "multiconnect_receiver",
+            title="Multiconnect receiver verification",
+            gallery_filename="gallery.html",
+            views=_MULTICONNECT_RECEIVER_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            multiconnect_backer,
+            verification_dir / "multiconnect_backer",
+            title="Multiconnect backer verification",
+            gallery_filename="gallery.html",
+            views=_MULTICONNECT_BACKER_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            multiconnect_delete_tool,
+            verification_dir / "multiconnect_delete_tool",
+            title="Multiconnect delete tool verification",
+            gallery_filename="gallery.html",
+            views=_MULTICONNECT_DELETE_TOOL_VERIFICATION_VIEWS,
         ),
         *_export_shape_verification(
             snap_threads,
@@ -652,6 +797,20 @@ def _export_output_verification(
             title="expanding snap verification",
             gallery_filename="gallery.html",
             views=_EXPANDING_SNAP_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            openconnect_head,
+            verification_dir / "openconnect_head",
+            title="openConnect head verification",
+            gallery_filename="gallery.html",
+            views=_OPENCONNECT_HEAD_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            multiconnect_head,
+            verification_dir / "multiconnect_head",
+            title="Multiconnect head verification",
+            gallery_filename="gallery.html",
+            views=_MULTICONNECT_HEAD_VERIFICATION_VIEWS,
         ),
         *_export_shape_verification(
             opengrid_snap,
@@ -676,6 +835,282 @@ def _export_output_verification(
         ),
     )
 
+
+def _export_variant_output_verification(
+    *,
+    board_config: GridConfig,
+    slot_delete_tool_config: ConnectorSlotDeleteToolConfig,
+    adjacent_connector_config: AdjacentGridConnectorConfig,
+    multiconnect_config: MulticonnectConfig,
+    snap_thread_config: SnapThreadConfig,
+    snap_body_config: SnapBodyConfig,
+    expanding_snap_config: ExpandingSnapConfig,
+    openconnect_head_config: OpenConnectHeadConfig,
+    connector_slot_config: ConnectorSlotConfig,
+    multiconnect_head_config: MulticonnectHeadConfig,
+    opengrid_snap_config: OpenGridSnapConfig,
+    openconnect_screw_config: OpenConnectScrewConfig,
+    multiconnect_screw_config: MulticonnectScrewConfig,
+    verification_dir: Path,
+) -> tuple[Path, ...]:
+    return (
+        *_export_component_variant_verification(_board_verification_variants(board_config), verification_dir / "opengrid_board", "openGrid board variant verification"),
+        *_export_component_variant_verification(
+            _slot_delete_tool_verification_variants(slot_delete_tool_config),
+            verification_dir / "adjacent_grid_connector_slot_delete_tool",
+            "adjacent-grid connector slot delete tool variant verification",
+        ),
+        *_export_component_variant_verification(
+            _adjacent_connector_verification_variants(adjacent_connector_config),
+            verification_dir / "adjacent_grid_connector",
+            "adjacent-grid connector variant verification",
+        ),
+        *_export_component_variant_verification(
+            _multiconnect_rail_verification_variants(multiconnect_config),
+            verification_dir / "multiconnect_rail",
+            "Multiconnect rail variant verification",
+        ),
+        *_export_component_variant_verification(
+            _multiconnect_receiver_verification_variants(multiconnect_config),
+            verification_dir / "multiconnect_receiver",
+            "Multiconnect receiver variant verification",
+        ),
+        *_export_component_variant_verification(
+            _multiconnect_backer_verification_variants(multiconnect_config),
+            verification_dir / "multiconnect_backer",
+            "Multiconnect backer variant verification",
+        ),
+        *_export_component_variant_verification(
+            _multiconnect_delete_tool_verification_variants(multiconnect_config),
+            verification_dir / "multiconnect_delete_tool",
+            "Multiconnect delete tool variant verification",
+        ),
+        *_export_component_variant_verification(_snap_thread_verification_variants(snap_thread_config), verification_dir / "snap_threads", "snap thread variant verification"),
+        *_export_component_variant_verification(_snap_body_verification_variants(snap_body_config), verification_dir / "snap_body", "snap body variant verification"),
+        *_export_component_variant_verification(
+            _expanding_snap_verification_variants(expanding_snap_config),
+            verification_dir / "expanding_snap",
+            "expanding snap variant verification",
+        ),
+        *_export_component_variant_verification(
+            _openconnect_head_verification_variants(openconnect_head_config),
+            verification_dir / "openconnect_head",
+            "openConnect head variant verification",
+        ),
+        *_export_component_variant_verification(
+            _multiconnect_head_verification_variants(multiconnect_head_config, connector_slot_config),
+            verification_dir / "multiconnect_head",
+            "Multiconnect head variant verification",
+        ),
+        *_export_component_variant_verification(
+            _opengrid_snap_verification_variants(opengrid_snap_config),
+            verification_dir / "opengrid_snap",
+            "assembled openGrid snap variant verification",
+        ),
+        *_export_component_variant_verification(
+            _openconnect_screw_verification_variants(openconnect_screw_config),
+            verification_dir / "openconnect_screw",
+            "openConnect screw variant verification",
+        ),
+        *_export_component_variant_verification(
+            _multiconnect_screw_verification_variants(multiconnect_screw_config),
+            verification_dir / "multiconnect_screw",
+            "Multiconnect screw variant verification",
+        ),
+    )
+
+
+def _board_verification_variants(config: GridConfig) -> tuple[_VerificationVariant, ...]:
+    kind_variants = tuple(
+        (_slug(kind.value), build_open_grid(replace(config, kind=kind, fill_space_mode=FillSpaceMode.NONE)), _BOARD_VERIFICATION_VIEWS)
+        for kind in BoardKind
+    )
+    fill_variants = tuple(
+        (
+            f"fill_{_slug(mode.value)}",
+            build_open_grid(replace(config, fill_space_mode=mode)),
+            _BOARD_VERIFICATION_VIEWS,
+        )
+        for mode in FillSpaceMode
+    )
+    return (*kind_variants, *fill_variants)
+
+
+def _slot_delete_tool_verification_variants(config: ConnectorSlotDeleteToolConfig) -> tuple[_VerificationVariant, ...]:
+    return (("default", build_connector_slot_delete_tool(config), _ADJACENT_SLOT_DELETE_TOOL_VERIFICATION_VIEWS),)
+
+
+def _adjacent_connector_verification_variants(config: AdjacentGridConnectorConfig) -> tuple[_VerificationVariant, ...]:
+    return (
+        ("configured", build_adjacent_grid_connector(config), _ADJACENT_CONNECTOR_VERIFICATION_VIEWS),
+        ("tight_fit", build_adjacent_grid_connector(replace(config, fit_clearance=0.0)), _ADJACENT_CONNECTOR_VERIFICATION_VIEWS),
+        ("loose_fit", build_adjacent_grid_connector(replace(config, fit_clearance=0.2)), _ADJACENT_CONNECTOR_VERIFICATION_VIEWS),
+    )
+
+
+def _multiconnect_rail_verification_variants(config: MulticonnectConfig) -> tuple[_VerificationVariant, ...]:
+    profile_variants = tuple(
+        (f"profile_{_slug(profile.value)}", build_multiconnect_rail(replace(config, profile=profile)), _MULTICONNECT_RAIL_VERIFICATION_VIEWS)
+        for profile in _multiconnect_profile_variants()
+    )
+    rounding_variants = tuple(
+        (f"rounding_{_slug(rounding.value)}", build_multiconnect_rail(replace(config, rounding=rounding)), _MULTICONNECT_RAIL_VERIFICATION_VIEWS)
+        for rounding in MulticonnectRounding
+    )
+    return (*profile_variants, *rounding_variants)
+
+
+def _multiconnect_receiver_verification_variants(config: MulticonnectConfig) -> tuple[_VerificationVariant, ...]:
+    return tuple(
+        (
+            f"profile_{_slug(profile.value)}",
+            build_multiconnect_receiver(replace(config, profile=profile)),
+            _MULTICONNECT_RECEIVER_VERIFICATION_VIEWS,
+        )
+        for profile in _multiconnect_profile_variants()
+    )
+
+
+def _multiconnect_backer_verification_variants(config: MulticonnectConfig) -> tuple[_VerificationVariant, ...]:
+    return tuple(
+        (
+            f"profile_{_slug(profile.value)}",
+            build_multiconnect_backer(replace(config, profile=profile)),
+            _MULTICONNECT_BACKER_VERIFICATION_VIEWS,
+        )
+        for profile in _multiconnect_profile_variants()
+    )
+
+
+def _multiconnect_delete_tool_verification_variants(config: MulticonnectConfig) -> tuple[_VerificationVariant, ...]:
+    return tuple(
+        (
+            f"profile_{_slug(profile.value)}",
+            build_multiconnect_delete_tool(replace(config, profile=profile)),
+            _MULTICONNECT_DELETE_TOOL_VERIFICATION_VIEWS,
+        )
+        for profile in _multiconnect_profile_variants()
+    )
+
+
+def _snap_thread_verification_variants(config: SnapThreadConfig) -> tuple[_VerificationVariant, ...]:
+    type_variants = tuple(
+        (f"type_{_slug(thread_type.value)}", build_snap_threads(replace(config, thread_type=thread_type)), _SNAP_THREAD_VERIFICATION_VIEWS)
+        for thread_type in ThreadType
+    )
+    height_variants = tuple(
+        (name, build_snap_threads(replace(config, height=height)), _SNAP_THREAD_VERIFICATION_VIEWS)
+        for name, height in (("height_standard", 6.8), ("height_lite", 4.0), ("height_lite_basic", 3.4))
+    )
+    return (*type_variants, *height_variants)
+
+
+def _snap_body_verification_variants(config: SnapBodyConfig) -> tuple[_VerificationVariant, ...]:
+    shape_variants = tuple(
+        (f"shape_{_slug(shape.value)}", build_snap_body(replace(config, body_shape=shape)), _SNAP_BODY_VERIFICATION_VIEWS)
+        for shape in SnapBodyShape
+    )
+    thickness_variants = tuple(
+        (name, build_snap_body(replace(config, thickness=thickness)), _SNAP_BODY_VERIFICATION_VIEWS)
+        for name, thickness in (("thickness_standard", 6.8), ("thickness_lite", 4.0), ("thickness_lite_basic", 3.4))
+    )
+    return (*shape_variants, *thickness_variants)
+
+
+def _expanding_snap_verification_variants(config: ExpandingSnapConfig) -> tuple[_VerificationVariant, ...]:
+    type_variants = tuple(
+        (
+            f"threads_{_slug(thread_type.value)}",
+            build_expanding_snap(replace(config, threads=replace(config.threads, thread_type=thread_type))),
+            _EXPANDING_SNAP_VERIFICATION_VIEWS,
+        )
+        for thread_type in ThreadType
+    )
+    shape_variants = tuple(
+        (
+            f"shape_{_slug(shape.value)}",
+            build_expanding_snap(replace(config, snap_body=replace(config.snap_body, body_shape=shape))),
+            _EXPANDING_SNAP_VERIFICATION_VIEWS,
+        )
+        for shape in SnapBodyShape
+    )
+    thickness_variants = tuple(
+        (
+            name,
+            build_expanding_snap(replace(config, snap_body=replace(config.snap_body, thickness=thickness))),
+            _EXPANDING_SNAP_VERIFICATION_VIEWS,
+        )
+        for name, thickness in (("thickness_standard", 6.8), ("thickness_lite", 4.0))
+    )
+    return (*type_variants, *shape_variants, *thickness_variants)
+
+
+def _openconnect_head_verification_variants(config: OpenConnectHeadConfig) -> tuple[_VerificationVariant, ...]:
+    return (
+        ("nubs_enabled", build_openconnect_head(replace(config, add_nubs=True)), _OPENCONNECT_HEAD_VERIFICATION_VIEWS),
+        ("nubs_disabled", build_openconnect_head(replace(config, add_nubs=False)), _OPENCONNECT_HEAD_VERIFICATION_VIEWS),
+    )
+
+
+def _multiconnect_head_verification_variants(
+    config: MulticonnectHeadConfig,
+    connector_slot: ConnectorSlotConfig,
+) -> tuple[_VerificationVariant, ...]:
+    return tuple(
+        (
+            f"top_{_slug(top_pattern)}",
+            build_multiconnect_head(replace(config, top_pattern=top_pattern), connector_slot),
+            _MULTICONNECT_HEAD_VERIFICATION_VIEWS,
+        )
+        for top_pattern in ("coin_slot", "dimple", "none")
+    )
+
+
+def _opengrid_snap_verification_variants(config: OpenGridSnapConfig) -> tuple[_VerificationVariant, ...]:
+    return tuple(
+        (
+            f"kind_{_slug(kind.value)}",
+            build_opengrid_snap(replace(config, kind=kind)),
+            _OPENGRID_SNAP_VERIFICATION_VIEWS,
+        )
+        for kind in OpenGridSnapKind
+    )
+
+
+def _openconnect_screw_verification_variants(config: OpenConnectScrewConfig) -> tuple[_VerificationVariant, ...]:
+    folded_variants = tuple(
+        (f"folded_{_slug(str(folded))}", build_openconnect_screw(replace(config, folded=folded)), _OPENCONNECT_SCREW_VERIFICATION_VIEWS)
+        for folded in (False, True)
+    )
+    thread_variants = tuple(
+        (
+            f"threads_{_slug(thread_type.value)}",
+            build_openconnect_screw(replace(config, threads=replace(config.threads, thread_type=thread_type))),
+            _OPENCONNECT_SCREW_VERIFICATION_VIEWS,
+        )
+        for thread_type in ThreadType
+    )
+    return (*folded_variants, *thread_variants)
+
+
+def _multiconnect_screw_verification_variants(config: MulticonnectScrewConfig) -> tuple[_VerificationVariant, ...]:
+    top_variants = tuple(
+        (
+            f"top_{_slug(top_pattern)}",
+            build_multiconnect_screw(replace(config, head=replace(config.head, top_pattern=top_pattern))),
+            _MULTICONNECT_SCREW_VERIFICATION_VIEWS,
+        )
+        for top_pattern in ("coin_slot", "dimple", "none")
+    )
+    thread_variants = tuple(
+        (
+            f"threads_{_slug(thread_type.value)}",
+            build_multiconnect_screw(replace(config, threads=replace(config.threads, thread_type=thread_type))),
+            _MULTICONNECT_SCREW_VERIFICATION_VIEWS,
+        )
+        for thread_type in ThreadType
+    )
+    return (*top_variants, *thread_variants)
 
 def _write_verification_gallery(title: str, svg_paths: list[Path], gallery_path: Path) -> None:
     figures = "\n".join(
@@ -780,14 +1215,20 @@ def main() -> None:
     bd.export_step(opengrid_snap, opengrid_snap_path)
     bd.export_step(openconnect_screw, openconnect_screw_path)
     bd.export_step(multiconnect_screw, multiconnect_screw_path)
-    verification_paths = _export_output_verification(
-        multiconnect_rail=multiconnect_rail,
-        snap_threads=snap_threads,
-        snap_body=snap_body,
-        expanding_snap=expanding_snap,
-        opengrid_snap=opengrid_snap,
-        openconnect_screw=openconnect_screw,
-        multiconnect_screw=multiconnect_screw,
+    verification_paths = _export_variant_output_verification(
+        board_config=board_config,
+        slot_delete_tool_config=slot_delete_tool_config,
+        adjacent_connector_config=adjacent_connector_config,
+        multiconnect_config=multiconnect_config,
+        snap_thread_config=snap_thread_config,
+        snap_body_config=snap_body_config,
+        expanding_snap_config=expanding_snap_config,
+        openconnect_head_config=openconnect_head_config,
+        connector_slot_config=connector_slot_config,
+        multiconnect_head_config=multiconnect_head_config,
+        opengrid_snap_config=opengrid_snap_config,
+        openconnect_screw_config=openconnect_screw_config,
+        multiconnect_screw_config=multiconnect_screw_config,
         verification_dir=verification_dir,
     )
 
