@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import os
 import shutil
 from pathlib import Path
@@ -16,20 +17,34 @@ from opengrid_build123 import (
     BoardKind,
     ChamferMode,
     ConnectorSlotDeleteToolConfig,
+    ConnectorSlotConfig,
     FillSpaceMode,
     MulticonnectConfig,
     MulticonnectPartKind,
     MulticonnectProfile,
     MulticonnectRounding,
+    MulticonnectHeadConfig,
     SnapThreadConfig,
     ExpandingSnapConfig,
     SnapBodyConfig,
     SnapBodyShape,
+    OpenConnectHeadConfig,
+    OpenConnectScrewConfig,
+    OpenGridSnapConfig,
+    OpenGridSnapKind,
     GridConfig,
     ScrewMounting,
     StackingMethod,
     ThreadType,
+    MulticonnectScrewConfig,
+    TextEngravingConfig,
+    TextLabel,
     build_multiconnect_profile,
+    build_openconnect_head,
+    build_openconnect_screw,
+    build_multiconnect_head,
+    build_multiconnect_screw,
+    build_opengrid_snap,
     build_multiconnect_backer,
     build_multiconnect_delete_tool,
     build_multiconnect_rail,
@@ -68,6 +83,24 @@ _EXPANDING_SNAP_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
     ("expanding_snap_iso.svg", (36.0, -48.0, 28.0), (0.0, 0.0, 1.0)),
     ("expanding_snap_front.svg", (0.0, -64.0, 3.4), (0.0, 0.0, 1.0)),
     ("expanding_snap_top.svg", (0.0, 0.0, 64.0), (0.0, 1.0, 0.0)),
+)
+
+_OPENGRID_SNAP_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("opengrid_snap_iso.svg", (42.0, -56.0, 36.0), (0.0, 0.0, 1.0)),
+    ("opengrid_snap_front.svg", (0.0, -72.0, 8.0), (0.0, 0.0, 1.0)),
+    ("opengrid_snap_top.svg", (0.0, 0.0, 72.0), (0.0, 1.0, 0.0)),
+)
+
+_OPENCONNECT_SCREW_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("openconnect_screw_iso.svg", (32.0, -48.0, 28.0), (0.0, 0.0, 1.0)),
+    ("openconnect_screw_front.svg", (0.0, -64.0, 8.0), (0.0, 0.0, 1.0)),
+    ("openconnect_screw_top.svg", (0.0, 0.0, 64.0), (0.0, 1.0, 0.0)),
+)
+
+_MULTICONNECT_SCREW_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("multiconnect_screw_iso.svg", (32.0, -48.0, 28.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_screw_front.svg", (0.0, -64.0, 8.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_screw_top.svg", (0.0, 0.0, 64.0), (0.0, 1.0, 0.0)),
 )
 
 class _DisplayShape(Protocol):
@@ -326,6 +359,122 @@ def _expanding_snap_config(snap_body: SnapBodyConfig, threads: SnapThreadConfig,
     )
 
 
+def _text_engraving_config(config: dict[str, Any]) -> TextEngravingConfig:
+    text_section = _section(config, "text_engraving")
+    labels_value = _required(text_section, "labels")
+    if not isinstance(labels_value, list):
+        raise SystemExit("Config key `labels` must be a list")
+    labels: list[TextLabel] = []
+    for item in labels_value:
+        if not isinstance(item, dict):
+            raise SystemExit("Text label entries must be mappings")
+        labels.append(
+            TextLabel(
+                text=_as_str(item, "text"),
+                size=_as_float(item, "size"),
+                position=_as_vector2(item, "position"),
+                depth=_as_float(item, "depth"),
+                font=_as_str(item, "font"),
+                top=_as_bool(item, "top"),
+            )
+        )
+    return TextEngravingConfig(labels=tuple(labels))
+
+
+def _openconnect_head_config(config: dict[str, Any]) -> OpenConnectHeadConfig:
+    head = _section(config, "openconnect_head")
+    return OpenConnectHeadConfig(
+        bottom_height=_as_float(head, "bottom_height"),
+        top_height=_as_float(head, "top_height"),
+        middle_height=_as_float(head, "middle_height"),
+        large_rect_width=_as_float(head, "large_rect_width"),
+        large_rect_height=_as_float(head, "large_rect_height"),
+        large_rect_chamfer=_as_float(head, "large_rect_chamfer"),
+        nub_to_top_distance=_as_float(head, "nub_to_top_distance"),
+        nub_depth=_as_float(head, "nub_depth"),
+        nub_tip_height=_as_float(head, "nub_tip_height"),
+        nub_fillet=_as_float(head, "nub_fillet"),
+        back_pos_offset=_as_float(head, "back_pos_offset"),
+        add_nubs=_as_bool(head, "add_nubs"),
+    )
+
+
+def _connector_slot_config(config: dict[str, Any]) -> ConnectorSlotConfig:
+    slot = _section(config, "connector_slot")
+    return ConnectorSlotConfig(
+        coin_slot_height=_as_float(slot, "coin_slot_height"),
+        coin_slot_width=_as_float(slot, "coin_slot_width"),
+        coin_slot_thickness=_as_float(slot, "coin_slot_thickness"),
+        flat_slot_height=_as_float(slot, "flat_slot_height"),
+        flat_slot_width=_as_float(slot, "flat_slot_width"),
+        flat_slot_height_offset=_as_float(slot, "flat_slot_height_offset"),
+        flat_slot_start_thickness=_as_float(slot, "flat_slot_start_thickness"),
+        flat_slot_end_thickness=_as_float(slot, "flat_slot_end_thickness"),
+    )
+
+
+def _multiconnect_head_config(config: dict[str, Any]) -> MulticonnectHeadConfig:
+    head = _section(config, "multiconnect_head")
+    return MulticonnectHeadConfig(
+        large_diameter=_as_float(head, "large_diameter"),
+        small_diameter=_as_float(head, "small_diameter"),
+        top_height=_as_float(head, "top_height"),
+        middle_height=_as_float(head, "middle_height"),
+        bottom_height=_as_float(head, "bottom_height"),
+        top_pattern=_as_str(head, "top_pattern"),
+    )
+
+
+def _openconnect_screw_config(
+    threads: SnapThreadConfig,
+    head: OpenConnectHeadConfig,
+    connector_slot: ConnectorSlotConfig,
+    text: TextEngravingConfig,
+    config: dict[str, Any],
+) -> OpenConnectScrewConfig:
+    screw = _section(config, "openconnect_screw")
+    return OpenConnectScrewConfig(
+        threads=threads,
+        head=head,
+        connector_slot=connector_slot,
+        text=text,
+        folded=_as_bool(screw, "folded"),
+    )
+
+
+def _multiconnect_screw_config(
+    threads: SnapThreadConfig,
+    head: MulticonnectHeadConfig,
+    connector_slot: ConnectorSlotConfig,
+    text: TextEngravingConfig,
+) -> MulticonnectScrewConfig:
+    return MulticonnectScrewConfig(threads=threads, head=head, connector_slot=connector_slot, text=text)
+
+
+def _opengrid_snap_config(
+    snap_body: SnapBodyConfig,
+    threads: SnapThreadConfig,
+    expanding_snap: ExpandingSnapConfig,
+    openconnect_head: OpenConnectHeadConfig,
+    multiconnect_head: MulticonnectHeadConfig,
+    text: TextEngravingConfig,
+    config: dict[str, Any],
+) -> OpenGridSnapConfig:
+    snap = _section(config, "opengrid_snap")
+    return OpenGridSnapConfig(
+        kind=OpenGridSnapKind(_as_str(snap, "kind")),
+        snap_body=snap_body,
+        threads=threads,
+        expanding_snap=expanding_snap,
+        openconnect_head=openconnect_head,
+        multiconnect_head=multiconnect_head,
+        text=text,
+        center_offset=_as_vector2(snap, "center_offset"),
+        reverse_threads_entryside=_as_bool(snap, "reverse_threads_entryside"),
+        disable_threads=_as_bool(snap, "disable_threads"),
+    )
+
+
 def _grid_config(config: dict[str, Any], slot_delete_tool: ConnectorSlotDeleteToolConfig) -> GridConfig:
     board = _section(config, "board")
     return GridConfig(
@@ -384,6 +533,9 @@ def _show_objects(
     snap_threads: _DisplayShape,
     snap_body: _DisplayShape,
     expanding_snap: _DisplayShape,
+    opengrid_snap: _DisplayShape,
+    openconnect_screw: _DisplayShape,
+    multiconnect_screw: _DisplayShape,
     viewer: dict[str, Any],
 ) -> None:
     port = _as_optional_port(viewer, "port")
@@ -404,6 +556,9 @@ def _show_objects(
         snap_threads.translate(_as_vector(viewer, "snap_threads_offset")),
         snap_body.translate(_as_vector(viewer, "snap_body_offset")),
         expanding_snap.translate(_as_vector(viewer, "expanding_snap_offset")),
+        opengrid_snap.translate(_as_vector(viewer, "opengrid_snap_offset")),
+        openconnect_screw.translate(_as_vector(viewer, "openconnect_screw_offset")),
+        multiconnect_screw.translate(_as_vector(viewer, "multiconnect_screw_offset")),
         names=[
             "openGrid board with adjacent-grid connector slots",
             "adjacent-grid connector slot delete tool",
@@ -415,6 +570,9 @@ def _show_objects(
             "snap threads",
             "snap body",
             "expanding snap",
+            "assembled openGrid snap",
+            "openConnect screw",
+            "Multiconnect screw",
         ],
         port=port,
         reset_camera=Camera.CENTER,
@@ -461,6 +619,9 @@ def _export_output_verification(
     snap_threads: _DisplayShape,
     snap_body: _DisplayShape,
     expanding_snap: _DisplayShape,
+    opengrid_snap: _DisplayShape,
+    openconnect_screw: _DisplayShape,
+    multiconnect_screw: _DisplayShape,
     verification_dir: Path,
 ) -> tuple[Path, ...]:
     return (
@@ -491,6 +652,27 @@ def _export_output_verification(
             title="expanding snap verification",
             gallery_filename="gallery.html",
             views=_EXPANDING_SNAP_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            opengrid_snap,
+            verification_dir / "opengrid_snap",
+            title="assembled openGrid snap verification",
+            gallery_filename="gallery.html",
+            views=_OPENGRID_SNAP_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            openconnect_screw,
+            verification_dir / "openconnect_screw",
+            title="openConnect screw verification",
+            gallery_filename="gallery.html",
+            views=_OPENCONNECT_SCREW_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            multiconnect_screw,
+            verification_dir / "multiconnect_screw",
+            title="Multiconnect screw verification",
+            gallery_filename="gallery.html",
+            views=_MULTICONNECT_SCREW_VERIFICATION_VIEWS,
         ),
     )
 
@@ -525,6 +707,32 @@ def main() -> None:
     snap_thread_config = _snap_thread_config(config)
     snap_body_config = _snap_body_config(config)
     expanding_snap_config = _expanding_snap_config(snap_body_config, snap_thread_config, config)
+    text_config = _text_engraving_config(config)
+    openconnect_head_config = _openconnect_head_config(config)
+    connector_slot_config = _connector_slot_config(config)
+    multiconnect_head_config = _multiconnect_head_config(config)
+    opengrid_snap_config = _opengrid_snap_config(
+        snap_body_config,
+        snap_thread_config,
+        expanding_snap_config,
+        openconnect_head_config,
+        multiconnect_head_config,
+        text_config,
+        config,
+    )
+    openconnect_screw_config = _openconnect_screw_config(
+        replace(snap_thread_config, clearance=0.0),
+        openconnect_head_config,
+        connector_slot_config,
+        text_config,
+        config,
+    )
+    multiconnect_screw_config = _multiconnect_screw_config(
+        replace(snap_thread_config, clearance=0.0),
+        multiconnect_head_config,
+        connector_slot_config,
+        text_config,
+    )
     multiconnect_profile = build_multiconnect_profile(multiconnect_config)
     multiconnect_rail = build_multiconnect_rail(multiconnect_config)
     multiconnect_receiver = build_multiconnect_receiver(multiconnect_config)
@@ -536,6 +744,11 @@ def main() -> None:
     grid = build_open_grid(board_config)
     slot_delete_tool = build_connector_slot_delete_tool(slot_delete_tool_config)
     adjacent_connector = build_adjacent_grid_connector(adjacent_connector_config)
+    openconnect_head = build_openconnect_head(openconnect_head_config)
+    multiconnect_head = build_multiconnect_head(multiconnect_head_config, connector_slot_config)
+    opengrid_snap = build_opengrid_snap(opengrid_snap_config)
+    openconnect_screw = build_openconnect_screw(openconnect_screw_config)
+    multiconnect_screw = build_multiconnect_screw(multiconnect_screw_config)
 
     grid_path = output_dir / "opengrid_board.step"
     slot_delete_tool_path = output_dir / "adjacent_grid_connector_slot_delete_tool.step"
@@ -547,6 +760,11 @@ def main() -> None:
     snap_threads_path = output_dir / "snap_threads.step"
     snap_body_path = output_dir / "snap_body.step"
     expanding_snap_path = output_dir / "expanding_snap.step"
+    openconnect_head_path = output_dir / "openconnect_head.step"
+    multiconnect_head_path = output_dir / "multiconnect_head.step"
+    opengrid_snap_path = output_dir / "opengrid_snap.step"
+    openconnect_screw_path = output_dir / "openconnect_screw.step"
+    multiconnect_screw_path = output_dir / "multiconnect_screw.step"
     bd.export_step(grid, grid_path)
     bd.export_step(slot_delete_tool, slot_delete_tool_path)
     bd.export_step(adjacent_connector, adjacent_connector_path)
@@ -557,11 +775,19 @@ def main() -> None:
     bd.export_step(snap_threads, snap_threads_path)
     bd.export_step(snap_body, snap_body_path)
     bd.export_step(expanding_snap, expanding_snap_path)
+    bd.export_step(openconnect_head, openconnect_head_path)
+    bd.export_step(multiconnect_head, multiconnect_head_path)
+    bd.export_step(opengrid_snap, opengrid_snap_path)
+    bd.export_step(openconnect_screw, openconnect_screw_path)
+    bd.export_step(multiconnect_screw, multiconnect_screw_path)
     verification_paths = _export_output_verification(
         multiconnect_rail=multiconnect_rail,
         snap_threads=snap_threads,
         snap_body=snap_body,
         expanding_snap=expanding_snap,
+        opengrid_snap=opengrid_snap,
+        openconnect_screw=openconnect_screw,
+        multiconnect_screw=multiconnect_screw,
         verification_dir=verification_dir,
     )
 
@@ -578,6 +804,9 @@ def main() -> None:
             snap_threads,
             snap_body,
             expanding_snap,
+            opengrid_snap,
+            openconnect_screw,
+            multiconnect_screw,
             viewer,
         )
 
@@ -592,6 +821,11 @@ def main() -> None:
         snap_threads_path,
         snap_body_path,
         expanding_snap_path,
+        openconnect_head_path,
+        multiconnect_head_path,
+        opengrid_snap_path,
+        openconnect_screw_path,
+        multiconnect_screw_path,
         *verification_paths,
     )
     print(
@@ -602,6 +836,9 @@ def main() -> None:
         + f"\nsnap_threads={snap_thread_config!r}"
         + f"\nsnap_body={snap_body_config!r}"
         + f"\nexpanding_snap={expanding_snap_config!r}"
+        + f"\nopengrid_snap={opengrid_snap_config!r}"
+        + f"\nopenconnect_screw={openconnect_screw_config!r}"
+        + f"\nmulticonnect_screw={multiconnect_screw_config!r}"
         + f"\nmulticonnect_profile={multiconnect_profile!r}"
     )
 

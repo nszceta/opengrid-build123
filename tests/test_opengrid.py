@@ -18,25 +18,39 @@ from opengrid_build123.opengrid import (
     MulticonnectPartKind,
     MulticonnectProfile,
     MulticonnectRounding,
+    MulticonnectHeadConfig,
     SnapThreadConfig,
     SnapBodyConfig,
     ExpandingSnapConfig,
     SnapBodyShape,
+    ConnectorSlotConfig,
+    OpenConnectHeadConfig,
+    OpenConnectScrewConfig,
+    OpenGridSnapConfig,
+    OpenGridSnapKind,
     ConnectorSlotDeleteToolConfig,
     GridConfig,
     ScrewMounting,
     StackingMethod,
     ThreadType,
+    MulticonnectScrewConfig,
+    TextEngravingConfig,
+    TextLabel,
     build_connector_slot_delete_tool,
     build_adjacent_grid_connector,
+    build_openconnect_head,
+    build_openconnect_screw,
     build_multiconnect_profile,
     build_multiconnect_backer,
     build_multiconnect_delete_tool,
     build_multiconnect_rail,
     build_multiconnect_receiver,
+    build_multiconnect_head,
+    build_multiconnect_screw,
     build_snap_threads,
     build_snap_body,
     build_expanding_snap,
+    build_opengrid_snap,
     _connector_z_base,
     _connector_positions,
     build_open_grid,
@@ -148,6 +162,9 @@ def test_example_config_exhaustively_lists_config_dataclass_fields() -> None:
         "snap_threads_offset",
         "snap_body_offset",
         "expanding_snap_offset",
+        "opengrid_snap_offset",
+        "openconnect_screw_offset",
+        "multiconnect_screw_offset",
     }
 
     expected_board_fields = {field.name for field in dataclass_fields(GridConfig)} - {"connector_slot_delete_tool"}
@@ -170,6 +187,24 @@ def test_example_config_exhaustively_lists_config_dataclass_fields() -> None:
     assert set(_mapping_section(config, "expanding_snap")) == {
         field.name for field in dataclass_fields(ExpandingSnapConfig)
     } - {"snap_body", "threads"}
+    assert set(_mapping_section(config, "text_engraving")) == {
+        field.name for field in dataclass_fields(TextEngravingConfig)
+    }
+    assert set(_mapping_section(config, "openconnect_head")) == {
+        field.name for field in dataclass_fields(OpenConnectHeadConfig)
+    }
+    assert set(_mapping_section(config, "connector_slot")) == {
+        field.name for field in dataclass_fields(ConnectorSlotConfig)
+    }
+    assert set(_mapping_section(config, "multiconnect_head")) == {
+        field.name for field in dataclass_fields(MulticonnectHeadConfig)
+    }
+    assert set(_mapping_section(config, "opengrid_snap")) == {
+        field.name for field in dataclass_fields(OpenGridSnapConfig)
+    } - {"snap_body", "threads", "expanding_snap", "openconnect_head", "multiconnect_head", "text"}
+    assert set(_mapping_section(config, "openconnect_screw")) == {
+        field.name for field in dataclass_fields(OpenConnectScrewConfig)
+    } - {"threads", "head", "connector_slot", "text"}
 
 
 @pytest.mark.parametrize(
@@ -661,6 +696,9 @@ def test_output_verification_exports_shape_svgs_into_named_subdirectories(tmp_pa
         snap_threads=rail,
         snap_body=rail,
         expanding_snap=rail,
+        opengrid_snap=rail,
+        openconnect_screw=rail,
+        multiconnect_screw=rail,
         verification_dir=tmp_path,
     )
 
@@ -681,6 +719,18 @@ def test_output_verification_exports_shape_svgs_into_named_subdirectories(tmp_pa
         Path("expanding_snap/expanding_snap_front.svg"),
         Path("expanding_snap/expanding_snap_top.svg"),
         Path("expanding_snap/gallery.html"),
+        Path("opengrid_snap/opengrid_snap_iso.svg"),
+        Path("opengrid_snap/opengrid_snap_front.svg"),
+        Path("opengrid_snap/opengrid_snap_top.svg"),
+        Path("opengrid_snap/gallery.html"),
+        Path("openconnect_screw/openconnect_screw_iso.svg"),
+        Path("openconnect_screw/openconnect_screw_front.svg"),
+        Path("openconnect_screw/openconnect_screw_top.svg"),
+        Path("openconnect_screw/gallery.html"),
+        Path("multiconnect_screw/multiconnect_screw_iso.svg"),
+        Path("multiconnect_screw/multiconnect_screw_front.svg"),
+        Path("multiconnect_screw/multiconnect_screw_top.svg"),
+        Path("multiconnect_screw/gallery.html"),
     )
     for path in paths:
         assert path.stat().st_size > 0
@@ -864,3 +914,50 @@ def test_available_space_fill_uses_best_whole_grid_fit() -> None:
     size = _bbox_size(config)
 
     assert size == pytest.approx((89.0, 56.0, 6.8))
+
+
+def test_openconnect_head_matches_source_envelope_and_lock_reliefs() -> None:
+    plain = build_openconnect_head(OpenConnectHeadConfig(add_nubs=False))
+    locked = build_openconnect_head(OpenConnectHeadConfig(add_nubs=True))
+    size = locked.bounding_box().size
+
+    assert (float(size.X), float(size.Y), float(size.Z)) == pytest.approx((17.0, 10.6, 2.6), abs=0.02)
+    assert locked.volume < plain.volume
+    assert OpenConnectHeadConfig().small_rect_width == pytest.approx(14.2)
+    assert OpenConnectHeadConfig().small_rect_height == pytest.approx(9.2)
+
+
+def test_snap_thread_backed_screws_add_heads_and_remove_slots() -> None:
+    threads = SnapThreadConfig(clearance=0.0)
+    openconnect = build_openconnect_screw(OpenConnectScrewConfig(threads=threads))
+    multiconnect = build_multiconnect_screw(MulticonnectScrewConfig(threads=threads))
+    bare_threads = build_snap_threads(threads)
+
+    assert openconnect.bounding_box().size.Z > bare_threads.bounding_box().size.Z
+    assert multiconnect.bounding_box().size.Z > bare_threads.bounding_box().size.Z
+    assert openconnect.volume > bare_threads.volume
+    assert multiconnect.volume > bare_threads.volume
+
+
+def test_opengrid_snap_product_variants_compose_expected_attachments() -> None:
+    bare = build_opengrid_snap(OpenGridSnapConfig(kind=OpenGridSnapKind.BARE))
+    threaded = build_opengrid_snap(OpenGridSnapConfig(kind=OpenGridSnapKind.BASIC_THREADS))
+    openconnect = build_opengrid_snap(OpenGridSnapConfig(kind=OpenGridSnapKind.OPENCONNECT))
+    multiconnect = build_opengrid_snap(OpenGridSnapConfig(kind=OpenGridSnapKind.MULTICONNECT))
+
+    assert threaded.bounding_box().size.Z > bare.bounding_box().size.Z
+    assert openconnect.bounding_box().size.Z > bare.bounding_box().size.Z
+    assert multiconnect.bounding_box().size.Z > bare.bounding_box().size.Z
+    assert threaded.volume > bare.volume
+    assert openconnect.volume > bare.volume
+    assert multiconnect.volume > bare.volume
+
+
+def test_text_engraving_removes_material_from_product_builders() -> None:
+    label = TextLabel(text="OG", size=3.0, depth=0.2)
+    text = TextEngravingConfig(labels=(label,))
+    plain = build_opengrid_snap(OpenGridSnapConfig(kind=OpenGridSnapKind.BARE))
+    engraved = build_opengrid_snap(OpenGridSnapConfig(kind=OpenGridSnapKind.BARE, text=text))
+
+    assert engraved.bounding_box().size == pytest.approx(plain.bounding_box().size)
+    assert engraved.volume < plain.volume

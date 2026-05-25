@@ -15,6 +15,11 @@ Implemented:
 - Lite adhesive base
 - Stacked tiles with interface layers
 - Fill-space generation modes
+- Adjacent-grid connector slot/delete-tool and positive connector primitives
+- Snap thread, snap body, and self-expanding snap primitives
+- Assembled snap products with openConnect or Multiconnect heads
+- Snap-thread-backed openConnect and Multiconnect screws
+- Cosmetic text engraving for product-level snap and screw builders
 - STL export CLI
 - OCP VS Code viewer example
 
@@ -49,9 +54,9 @@ Supported `--kind` values:
 
 ## Export STEP files and view in OCP VS Code
 
-The unified example reads `examples/config.yaml` by default. Edit that file to configure the board, adjacent-grid connector slot delete tool, positive adjacent-grid connector, STEP output directory, and optional OCP viewer display.
+The unified example reads `examples/config.yaml` by default. Edit that file to configure boards, adjacent-grid connector objects, Multiconnect rails/receivers/backers, snap primitives, assembled snap products, snap-thread-backed screws, STEP output, SVG verification, and optional OCP viewer display.
 
-Export the configured adjacent-grid connector objects as one STEP file per object:
+Export the configured objects as one STEP file per object:
 
 ```bash
 uv run python examples/main.py
@@ -86,8 +91,8 @@ export_grid(config, "opengrid_full_2x2.stl")
 ## Verification
 
 ```bash
-uv run pytest tests
-uv run basedpyright src tests examples
+uv run pytest tests/test_opengrid.py -q
+uv tool run basedpyright src tests examples
 ```
 
 Current test coverage checks:
@@ -99,6 +104,8 @@ Current test coverage checks:
 - Connector snap slots centered in side height
 - Stacked interface layer spacing
 - Complete-tile fill-space placement
+- Snap thread, snap body, expanding snap, assembled snap, screw, and engraving behavior
+- SVG verification gallery generation under `output/verification/<object>/gallery.html`
 
 ## Project layout
 

@@ -15,19 +15,33 @@ __all__ = [
     "FillSpaceMode",
     "ThreadType",
     "SnapBodyShape",
+    "OpenGridSnapKind",
     "ConnectorSlotDeleteToolConfig",
     "AdjacentGridConnectorConfig",
     "MulticonnectProfile",
     "MulticonnectPartKind",
     "MulticonnectConfig",
     "MulticonnectRounding",
+    "OpenConnectHeadConfig",
+    "ConnectorSlotConfig",
+    "MulticonnectHeadConfig",
     "SnapThreadConfig",
     "SnapBodyConfig",
     "ExpandingSnapConfig",
+    "TextLabel",
+    "TextEngravingConfig",
+    "OpenConnectScrewConfig",
+    "MulticonnectScrewConfig",
+    "OpenGridSnapConfig",
     "GridConfig",
     "ScrewMounting",
     "StackingMethod",
     "build_fill_space",
+    "build_openconnect_head",
+    "build_openconnect_screw",
+    "build_multiconnect_head",
+    "build_multiconnect_screw",
+    "build_opengrid_snap",
     "build_connector_slot_delete_tool",
     "build_adjacent_grid_connector",
     "build_multiconnect_profile",
@@ -142,6 +156,14 @@ class ThreadType(StrEnum):
 class SnapBodyShape(StrEnum):
     DIRECTIONAL = "Directional"
     SYMMETRIC = "Symmetric"
+class OpenGridSnapKind(StrEnum):
+    BARE = "Bare"
+    BASIC_THREADS = "Basic Threads"
+    SELF_EXPANDING_THREADS = "Self-Expanding Threads"
+    OPENCONNECT = "openConnect"
+    MULTICONNECT = "multiConnect"
+
+
 
 
 
@@ -411,6 +433,207 @@ class ExpandingSnapConfig:
             raise ValueError("expanding snap spring_gap must be positive")
         if self.threads.effective_diameter >= min(self.snap_body.width, self.snap_body.height):
             raise ValueError("expanding snap thread diameter is too large for the snap body")
+
+@dataclass(frozen=True, slots=True)
+class TextLabel:
+    """Single top-face engraving label for snap and screw products."""
+
+    text: str
+    size: float = 4.0
+    position: Point2D = (0.0, 0.0)
+    depth: float = 0.4
+    font: str = "Arial"
+    top: bool = True
+
+    def validate(self) -> None:
+        if not self.text:
+            raise ValueError("text label must not be empty")
+        if min(self.size, self.depth) <= 0.0:
+            raise ValueError("text label size and depth must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class TextEngravingConfig:
+    """Cosmetic text or emoji engraving applied by product-level builders."""
+
+    labels: tuple[TextLabel, ...] = ()
+
+    def validate(self) -> None:
+        for label in self.labels:
+            label.validate()
+
+
+@dataclass(frozen=True, slots=True)
+class OpenConnectHeadConfig:
+    """Configuration for the openConnect snap/screw rectangular head."""
+
+    bottom_height: float = 0.6
+    top_height: float = 0.6
+    middle_height: float = 1.4
+    large_rect_width: float = 17.0
+    large_rect_height: float = 10.6
+    large_rect_chamfer: float = 4.0
+    nub_to_top_distance: float = 7.2
+    nub_depth: float = 0.6
+    nub_tip_height: float = 1.2
+    nub_fillet: float = 0.8
+    back_pos_offset: float = 0.4
+    add_nubs: bool = True
+
+    def validate(self) -> None:
+        if min(
+            self.bottom_height,
+            self.top_height,
+            self.middle_height,
+            self.large_rect_width,
+            self.large_rect_height,
+            self.large_rect_chamfer,
+            self.nub_to_top_distance,
+            self.nub_depth,
+            self.nub_tip_height,
+            self.nub_fillet,
+        ) <= 0.0:
+            raise ValueError("openConnect head dimensions must be positive")
+        if self.small_rect_width <= 0.0 or self.small_rect_height <= 0.0:
+            raise ValueError("openConnect middle height is too large for the head")
+        if self.small_rect_chamfer <= 0.0:
+            raise ValueError("openConnect small-rect chamfer must be positive")
+        if self.large_rect_chamfer * 2.0 >= min(self.large_rect_width, self.large_rect_height):
+            raise ValueError("openConnect large-rect chamfer is too large")
+
+    @property
+    def total_height(self) -> float:
+        return self.bottom_height + self.middle_height + self.top_height
+
+    @property
+    def middle_to_bottom(self) -> float:
+        return self.large_rect_height - self.large_rect_width / 2.0 - self.back_pos_offset
+
+    @property
+    def small_rect_width(self) -> float:
+        return self.large_rect_width - self.middle_height * 2.0
+
+    @property
+    def small_rect_height(self) -> float:
+        return self.large_rect_height - self.middle_height
+
+    @property
+    def small_rect_chamfer(self) -> float:
+        angle_adjust = math.tan(math.radians(45.0 / 2.0)) * self.middle_height
+        return self.large_rect_chamfer - self.middle_height + angle_adjust
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectorSlotConfig:
+    """Coin/flat screwdriver slot used in openConnect and Multiconnect screws."""
+
+    coin_slot_height: float = 2.6
+    coin_slot_width: float = 13.0
+    coin_slot_thickness: float = 2.2
+    flat_slot_height: float = 5.0
+    flat_slot_width: float = 6.5
+    flat_slot_height_offset: float = 0.7
+    flat_slot_start_thickness: float = 1.8
+    flat_slot_end_thickness: float = 1.2
+
+    def validate(self) -> None:
+        if min(
+            self.coin_slot_height,
+            self.coin_slot_width,
+            self.coin_slot_thickness,
+            self.flat_slot_height,
+            self.flat_slot_width,
+            self.flat_slot_start_thickness,
+            self.flat_slot_end_thickness,
+        ) <= 0.0:
+            raise ValueError("connector slot dimensions must be positive")
+        if self.flat_slot_height <= self.coin_slot_height:
+            raise ValueError("connector flat slot must extend below the coin slot")
+
+    @property
+    def coin_slot_radius(self) -> float:
+        return self.coin_slot_height / 2.0 + self.coin_slot_width * self.coin_slot_width / (8.0 * self.coin_slot_height)
+
+
+@dataclass(frozen=True, slots=True)
+class MulticonnectHeadConfig:
+    """Configuration for the round Multiconnect screw/snap head."""
+
+    large_diameter: float = 20.0
+    small_diameter: float = 15.0
+    top_height: float = 0.5
+    middle_height: float = 2.5
+    bottom_height: float = 1.0
+    top_pattern: str = "coin_slot"
+
+    def validate(self) -> None:
+        if min(self.large_diameter, self.small_diameter, self.top_height, self.middle_height, self.bottom_height) <= 0.0:
+            raise ValueError("Multiconnect head dimensions must be positive")
+        if self.small_diameter > self.large_diameter:
+            raise ValueError("Multiconnect small diameter must not exceed large diameter")
+        if self.top_pattern not in {"coin_slot", "dimple", "none"}:
+            raise ValueError("Multiconnect top_pattern must be coin_slot, dimple, or none")
+
+    @property
+    def total_height(self) -> float:
+        return self.top_height + self.middle_height + self.bottom_height
+
+
+@dataclass(frozen=True, slots=True)
+class OpenConnectScrewConfig:
+    """Snap-thread-backed openConnect screw product."""
+
+    threads: SnapThreadConfig = field(default_factory=lambda: SnapThreadConfig(clearance=0.0))
+    head: OpenConnectHeadConfig = field(default_factory=OpenConnectHeadConfig)
+    connector_slot: ConnectorSlotConfig = field(default_factory=ConnectorSlotConfig)
+    text: TextEngravingConfig = field(default_factory=TextEngravingConfig)
+    folded: bool = False
+
+    def validate(self) -> None:
+        self.threads.validate()
+        self.head.validate()
+        self.connector_slot.validate()
+        self.text.validate()
+
+
+@dataclass(frozen=True, slots=True)
+class MulticonnectScrewConfig:
+    """Snap-thread-backed Multiconnect screw product."""
+
+    threads: SnapThreadConfig = field(default_factory=lambda: SnapThreadConfig(clearance=0.0))
+    head: MulticonnectHeadConfig = field(default_factory=MulticonnectHeadConfig)
+    connector_slot: ConnectorSlotConfig = field(default_factory=ConnectorSlotConfig)
+    text: TextEngravingConfig = field(default_factory=TextEngravingConfig)
+
+    def validate(self) -> None:
+        self.threads.validate()
+        self.head.validate()
+        self.connector_slot.validate()
+        self.text.validate()
+
+
+@dataclass(frozen=True, slots=True)
+class OpenGridSnapConfig:
+    """Configuration for source-equivalent assembled openGrid snap products."""
+
+    kind: OpenGridSnapKind = OpenGridSnapKind.OPENCONNECT
+    snap_body: SnapBodyConfig = field(default_factory=SnapBodyConfig)
+    threads: SnapThreadConfig = field(default_factory=SnapThreadConfig)
+    expanding_snap: ExpandingSnapConfig = field(default_factory=ExpandingSnapConfig)
+    openconnect_head: OpenConnectHeadConfig = field(default_factory=OpenConnectHeadConfig)
+    multiconnect_head: MulticonnectHeadConfig = field(default_factory=MulticonnectHeadConfig)
+    text: TextEngravingConfig = field(default_factory=TextEngravingConfig)
+    center_offset: Point2D = (0.0, 0.0)
+    reverse_threads_entryside: bool = False
+    disable_threads: bool = False
+
+    def validate(self) -> None:
+        self.snap_body.validate()
+        self.threads.validate()
+        self.expanding_snap.validate()
+        self.openconnect_head.validate()
+        self.multiconnect_head.validate()
+        self.text.validate()
 
 
 
@@ -707,6 +930,99 @@ def build_expanding_snap(config: ExpandingSnapConfig = ExpandingSnapConfig()) ->
         body = cast(Shape, body - _snap_body_directional_slant_tool(body_config))
     tool = _expanding_snap_removal_tool(config).translate((config.center_offset[0], config.center_offset[1], 0.0))
     return cast(Shape, body - tool)
+def build_openconnect_head(config: OpenConnectHeadConfig = OpenConnectHeadConfig()) -> Shape:
+    """Build the source openConnect rectangular head with lock reliefs."""
+
+    config.validate()
+    bottom_profile = _openconnect_head_profile(config, top=False)
+    top_profile = _openconnect_head_profile(config, top=True)
+    bottom = _extrude_xy_polygon(bottom_profile, config.bottom_height)
+    transition = _loft_layer_polygons(
+        (bottom_profile, top_profile),
+        (config.bottom_height - _EPSILON, config.bottom_height + config.middle_height),
+    )
+    top = _extrude_xy_polygon(top_profile, config.top_height).translate(
+        (0.0, 0.0, config.bottom_height + config.middle_height - _EPSILON)
+    )
+    head = _fuse((bottom, transition, top))
+    if config.add_nubs:
+        head = cast(Shape, head - _openconnect_lock_tools(config))
+    return head
+
+
+def build_openconnect_screw(config: OpenConnectScrewConfig = OpenConnectScrewConfig()) -> Shape:
+    """Build a snap-thread-backed openConnect screw with screwdriver slot."""
+
+    config.validate()
+    head = build_openconnect_head(config.head)
+    head = _subtract_connector_slot(head, config.connector_slot, config.head.total_height)
+    threads = build_snap_threads(replace(config.threads, clearance=0.0)).translate(
+        (0.0, 0.0, config.head.total_height - _EPSILON)
+    )
+    screw = cast(Shape, head + threads)
+    return _engrave_text(screw, config.text, config.head.total_height + config.threads.height)
+
+
+def build_multiconnect_head(
+    config: MulticonnectHeadConfig = MulticonnectHeadConfig(),
+    connector_slot: ConnectorSlotConfig = ConnectorSlotConfig(),
+) -> Shape:
+    """Build the round Multiconnect head used by snap adapters and screws."""
+
+    config.validate()
+    connector_slot.validate()
+    bottom = bd.Cylinder(config.large_diameter / 2.0, config.bottom_height).translate(
+        (0.0, 0.0, config.bottom_height / 2.0)
+    )
+    middle_top_radius = max(_EPSILON, config.large_diameter / 2.0 - config.middle_height)
+    middle = bd.Cone(config.large_diameter / 2.0, middle_top_radius, config.middle_height).translate(
+        (0.0, 0.0, config.bottom_height + config.middle_height / 2.0 - _EPSILON)
+    )
+    top = bd.Cylinder(config.small_diameter / 2.0, config.top_height).translate(
+        (0.0, 0.0, config.bottom_height + config.middle_height + config.top_height / 2.0 - _EPSILON)
+    )
+    head = _fuse((cast(Shape, bottom), cast(Shape, middle), cast(Shape, top)))
+    if config.top_pattern == "coin_slot":
+        head = _subtract_connector_slot(head, connector_slot, config.total_height)
+    elif config.top_pattern == "dimple":
+        head = cast(Shape, head - bd.Cone(1.0, _EPSILON, 1.0).translate((0.0, 0.0, config.total_height - 0.5)))
+    return head
+
+
+def build_multiconnect_screw(config: MulticonnectScrewConfig = MulticonnectScrewConfig()) -> Shape:
+    """Build a snap-thread-backed Multiconnect screw."""
+
+    config.validate()
+    head = build_multiconnect_head(config.head, config.connector_slot)
+    threads = build_snap_threads(replace(config.threads, clearance=0.0)).translate(
+        (0.0, 0.0, config.head.total_height - _EPSILON)
+    )
+    screw = cast(Shape, head + threads)
+    return _engrave_text(screw, config.text, config.head.total_height + config.threads.height)
+
+
+def build_opengrid_snap(config: OpenGridSnapConfig = OpenGridSnapConfig()) -> Shape:
+    """Build assembled snap products from the parametric source generator."""
+
+    config.validate()
+    if config.kind is OpenGridSnapKind.SELF_EXPANDING_THREADS:
+        expanding = replace(
+            config.expanding_snap,
+            snap_body=config.snap_body,
+            threads=config.threads,
+            center_offset=config.center_offset,
+        )
+        return _engrave_text(build_expanding_snap(expanding), config.text, config.snap_body.thickness)
+
+    body = _engrave_text(build_snap_body(config.snap_body), config.text, config.snap_body.thickness)
+    if config.kind is OpenGridSnapKind.BARE:
+        return body
+    attachment = _opengrid_snap_attachment(config)
+    if attachment is None:
+        return body
+    return cast(Shape, body + attachment.translate((config.center_offset[0], config.center_offset[1], config.snap_body.thickness - _EPSILON)))
+
+
 
 
 def build_multiconnect_profile(config: MulticonnectConfig = MulticonnectConfig()) -> tuple[Point2D, ...]:
@@ -2139,6 +2455,80 @@ def _fuse(shapes: Sequence[Shape]) -> Shape:
     for shape in shapes[1:]:
         result = result + shape
     return cast(Shape, result)
+
+def _openconnect_head_profile(config: OpenConnectHeadConfig, *, top: bool) -> tuple[Point2D, ...]:
+    width = config.small_rect_width if top else config.large_rect_width
+    height = config.small_rect_height if top else config.large_rect_height
+    chamfer = config.small_rect_chamfer if top else config.large_rect_chamfer
+    back_offset = width / 2.0 + config.back_pos_offset
+    y_front = back_offset - height
+    y_back = back_offset
+    return (
+        (-width / 2.0, y_front),
+        (width / 2.0, y_front),
+        (width / 2.0, y_back - chamfer),
+        (width / 2.0 - chamfer, y_back),
+        (-width / 2.0 + chamfer, y_back),
+        (-width / 2.0, y_back - chamfer),
+    )
+
+
+def _openconnect_lock_tools(config: OpenConnectHeadConfig) -> Shape:
+    y = config.large_rect_width / 2.0 - config.nub_to_top_distance + config.back_pos_offset
+    tools = (
+        bd.Box(config.nub_depth * 2.0, config.nub_tip_height, config.total_height + 2.0 * _EPSILON).translate(
+            (-config.large_rect_width / 2.0, y, config.total_height / 2.0)
+        ),
+        bd.Box(config.nub_depth * 2.0, config.nub_tip_height, config.total_height + 2.0 * _EPSILON).translate(
+            (config.large_rect_width / 2.0, y, config.total_height / 2.0)
+        ),
+    )
+    return _fuse(tuple(cast(Shape, tool) for tool in tools))
+
+
+def _subtract_connector_slot(shape: Shape, config: ConnectorSlotConfig, top_z: float) -> Shape:
+    coin = bd.Cylinder(config.coin_slot_radius, config.coin_slot_thickness).rotate(bd.Axis.X, 90.0).translate(
+        (0.0, 0.0, top_z - config.coin_slot_height)
+    )
+    flat = bd.Box(
+        config.flat_slot_width,
+        config.coin_slot_thickness,
+        config.flat_slot_height - config.coin_slot_height + config.flat_slot_height_offset,
+    ).translate(
+        (
+            0.0,
+            -config.coin_slot_thickness / 2.0,
+            top_z - config.flat_slot_height / 2.0 - config.flat_slot_height_offset / 2.0,
+        )
+    )
+    return cast(Shape, shape - _fuse((cast(Shape, coin), cast(Shape, flat))))
+
+
+def _opengrid_snap_attachment(config: OpenGridSnapConfig) -> Shape | None:
+    if config.kind is OpenGridSnapKind.BASIC_THREADS:
+        if config.disable_threads:
+            return None
+        threads = build_snap_threads(config.threads)
+        if config.reverse_threads_entryside:
+            return cast(Shape, threads.rotate(bd.Axis.X, 180.0).translate((0.0, 0.0, config.threads.height)))
+        return threads
+    if config.kind is OpenGridSnapKind.OPENCONNECT:
+        return build_openconnect_head(config.openconnect_head)
+    if config.kind is OpenGridSnapKind.MULTICONNECT:
+        return build_multiconnect_head(config.multiconnect_head)
+    return None
+
+
+def _engrave_text(shape: Shape, config: TextEngravingConfig, top_z: float) -> Shape:
+    if not config.labels:
+        return shape
+    config.validate()
+    tools: list[Shape] = []
+    for label in config.labels:
+        text = bd.Text(label.text, label.size, font=label.font).translate((label.position[0], label.position[1], 0.0))
+        z = top_z - label.depth + _EPSILON if label.top else -_EPSILON
+        tools.append(cast(Shape, bd.extrude(text, amount=label.depth + _EPSILON).translate((0.0, 0.0, z))))
+    return cast(Shape, shape - _fuse(tools))
 
 
 def _unique(points: Iterable[Point2D]) -> tuple[Point2D, ...]:
