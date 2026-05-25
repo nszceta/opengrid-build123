@@ -173,7 +173,7 @@ def test_connector_holes_remove_material_without_changing_board_envelope() -> No
         (BoardKind.HEAVY, 6.9),
     ],
 )
-def test_connector_cutouts_leave_inner_side_wall_closed(kind: BoardKind, z: float) -> None:
+def test_connector_cutouts_match_slot_delete_tool_depth(kind: BoardKind, z: float) -> None:
     config = GridConfig(
         kind=kind,
         board_width=2,
@@ -183,15 +183,21 @@ def test_connector_cutouts_leave_inner_side_wall_closed(kind: BoardKind, z: floa
         screw_mounting=ScrewMounting.NONE,
     )
     board = build_open_grid(config)
+    edge = config.board_width * config.tile_size / 2.0
+    slot_depth = float(
+        build_connector_slot_delete_tool(config.connector_slot_delete_tool).bounding_box().size.X
+    )
+    removed_offset = edge - slot_depth + 0.2
+    retained_offset = edge - slot_depth - 0.2
 
-    assert not board.is_inside((27.5, 0.0, z))
-    assert board.is_inside((26.8, 0.0, z))
-    assert not board.is_inside((-27.5, 0.0, z))
-    assert board.is_inside((-26.8, 0.0, z))
-    assert not board.is_inside((0.0, 27.5, z))
-    assert board.is_inside((0.0, 26.8, z))
-    assert not board.is_inside((0.0, -27.5, z))
-    assert board.is_inside((0.0, -26.8, z))
+    assert not board.is_inside((removed_offset, 0.0, z))
+    assert board.is_inside((retained_offset, 0.0, z))
+    assert not board.is_inside((-removed_offset, 0.0, z))
+    assert board.is_inside((-retained_offset, 0.0, z))
+    assert not board.is_inside((0.0, removed_offset, z))
+    assert board.is_inside((0.0, retained_offset, z))
+    assert not board.is_inside((0.0, -removed_offset, z))
+    assert board.is_inside((0.0, -retained_offset, z))
 
 
 def test_connector_slot_delete_tool_height_config_changes_removed_material() -> None:

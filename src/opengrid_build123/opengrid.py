@@ -701,12 +701,12 @@ def _connector_tool(config: GridConfig, thickness: float, kind: BoardKind, posit
     width = config.board_width * config.tile_size
     height = config.board_height * config.tile_size
     if side == "right":
-        return _right_connector_slot_delete_tool(config, kind, width / 2.0, offset, z_base)
+        return _right_connector_slot_delete_tool(config, width / 2.0, offset, z_base)
     if side == "left":
-        return _left_connector_slot_delete_tool(config, kind, width / 2.0, offset, z_base)
+        return _left_connector_slot_delete_tool(config, width / 2.0, offset, z_base)
     if side == "top":
-        return _top_connector_slot_delete_tool(config, kind, height / 2.0, offset, z_base)
-    return _bottom_connector_slot_delete_tool(config, kind, height / 2.0, offset, z_base)
+        return _top_connector_slot_delete_tool(config, height / 2.0, offset, z_base)
+    return _bottom_connector_slot_delete_tool(config, height / 2.0, offset, z_base)
 
 
 def _connector_z_base(
@@ -724,80 +724,52 @@ def _connector_z_base(
 
 def _right_connector_slot_delete_tool(
     config: GridConfig,
-    kind: BoardKind,
     edge: float,
     offset: float,
     z_base: float,
 ) -> Shape:
-    return _configured_connector_slot_delete_tool(config, kind, z_base).rotate(bd.Axis.Z, 180.0).translate(
-        (edge + _EPSILON, offset, z_base)
+    return (
+        build_connector_slot_delete_tool(config.connector_slot_delete_tool)
+        .rotate(bd.Axis.Z, 180.0)
+        .translate((edge + _EPSILON, offset, z_base))
     )
 
 
 def _left_connector_slot_delete_tool(
     config: GridConfig,
-    kind: BoardKind,
     edge: float,
     offset: float,
     z_base: float,
 ) -> Shape:
-    return _configured_connector_slot_delete_tool(config, kind, z_base).translate(
+    return build_connector_slot_delete_tool(config.connector_slot_delete_tool).translate(
         (-edge - _EPSILON, offset, z_base)
     )
 
 
 def _top_connector_slot_delete_tool(
     config: GridConfig,
-    kind: BoardKind,
     edge: float,
     offset: float,
     z_base: float,
 ) -> Shape:
-    return _configured_connector_slot_delete_tool(config, kind, z_base).rotate(bd.Axis.Z, -90.0).translate(
-        (offset, edge + _EPSILON, z_base)
+    return (
+        build_connector_slot_delete_tool(config.connector_slot_delete_tool)
+        .rotate(bd.Axis.Z, -90.0)
+        .translate((offset, edge + _EPSILON, z_base))
     )
 
 
 def _bottom_connector_slot_delete_tool(
     config: GridConfig,
-    kind: BoardKind,
     edge: float,
     offset: float,
     z_base: float,
 ) -> Shape:
-    return _configured_connector_slot_delete_tool(config, kind, z_base).rotate(bd.Axis.Z, 90.0).translate(
-        (offset, -edge - _EPSILON, z_base)
+    return (
+        build_connector_slot_delete_tool(config.connector_slot_delete_tool)
+        .rotate(bd.Axis.Z, 90.0)
+        .translate((offset, -edge - _EPSILON, z_base))
     )
-
-
-def _configured_connector_slot_delete_tool(config: GridConfig, kind: BoardKind, z_base: float) -> Shape:
-    tool = build_connector_slot_delete_tool(config.connector_slot_delete_tool)
-    depth = _connector_cutout_depth(config, kind, z_base)
-    return _clip_connector_slot_delete_tool(tool, config.connector_slot_delete_tool, depth)
-
-
-def _connector_cutout_depth(config: GridConfig, kind: BoardKind, z_base: float) -> float:
-    z_top = z_base + config.connector_slot_delete_tool.height
-    side_profile = tuple((z, side_offset) for z, side_offset, _ in _profile_layers(config, kind))
-    depth = min(
-        _interpolated_offset(side_profile, z_base),
-        _interpolated_offset(side_profile, z_top),
-    )
-    for z, side_offset in side_profile:
-        if z_base < z < z_top:
-            depth = min(depth, side_offset)
-    return max(_EPSILON, depth - _EPSILON)
-
-
-def _clip_connector_slot_delete_tool(
-    tool: Shape,
-    config: ConnectorSlotDeleteToolConfig,
-    depth: float,
-) -> Shape:
-    y_size = config.dimple_radius * 4.0 + 2.0 * _EPSILON
-    z_size = config.height + 2.0 * _EPSILON
-    clip = bd.Box(depth, y_size, z_size).translate((depth / 2.0, 0.0, config.height / 2.0))
-    return cast(Shape, tool & clip)
 
 
 def _adhesive_base(config: GridConfig) -> Shape:
