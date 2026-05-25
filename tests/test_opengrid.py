@@ -1,11 +1,13 @@
 from __future__ import annotations
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
+import importlib.util
 import math
 import yaml
 from typing import Any
 
 import pytest
+
 
 from opengrid_build123.opengrid import (
     AdjacentGridConnectorConfig,
@@ -40,7 +42,7 @@ from opengrid_build123.opengrid import (
 )
 
 _EXAMPLE_CONFIG_PATH = Path(__file__).resolve().parents[1] / "examples" / "config.yaml"
-
+_EXAMPLE_MAIN_PATH = Path(__file__).resolve().parents[1] / "examples" / "main.py"
 
 def _bbox_size(config: GridConfig) -> tuple[float, float, float]:
     size = build_open_grid(config).bounding_box().size
@@ -58,6 +60,15 @@ def _snap_thread_bbox_size(config: SnapThreadConfig) -> tuple[float, float, floa
 
 def _snap_thread_volume(config: SnapThreadConfig) -> float:
     return float(build_snap_threads(config).volume)
+
+
+def _example_main() -> Any:
+    spec = importlib.util.spec_from_file_location("opengrid_example_main", _EXAMPLE_MAIN_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _example_config() -> dict[str, object]:
@@ -436,12 +447,40 @@ def test_multiconnect_dimple_and_on_ramp_toggles_change_volume_not_envelope() ->
     rail = build_multiconnect_rail(with_features)
     rail_without_dimples = build_multiconnect_rail(no_dimples)
     delete_tool = build_multiconnect_delete_tool(with_features)
+    delete_tool_without_dimples = build_multiconnect_delete_tool(no_dimples)
     delete_tool_without_ramps = build_multiconnect_delete_tool(no_ramps)
 
     assert rail.bounding_box().size == pytest.approx(rail_without_dimples.bounding_box().size)
     assert rail.volume < rail_without_dimples.volume
+    assert delete_tool.bounding_box().size == pytest.approx(delete_tool_without_dimples.bounding_box().size)
+    assert delete_tool.volume < delete_tool_without_dimples.volume
     assert delete_tool.bounding_box().size == pytest.approx(delete_tool_without_ramps.bounding_box().size)
     assert delete_tool.volume > delete_tool_without_ramps.volume
+
+def test_output_verification_exports_shape_svgs_into_named_subdirectories(tmp_path: Path) -> None:
+    rail = build_multiconnect_rail(MulticonnectConfig(length=28.0, rounding=MulticonnectRounding.NONE))
+
+    example_main = _example_main()
+    paths = example_main._export_output_verification(
+        multiconnect_rail=rail,
+        snap_threads=rail,
+        verification_dir=tmp_path,
+    )
+
+    assert tuple(path.relative_to(tmp_path) for path in paths) == (
+        Path("multiconnect_rail/multiconnect_rail_iso.svg"),
+        Path("multiconnect_rail/multiconnect_rail_back.svg"),
+        Path("multiconnect_rail/multiconnect_rail_top.svg"),
+        Path("multiconnect_rail/gallery.html"),
+        Path("snap_threads/snap_threads_iso.svg"),
+        Path("snap_threads/snap_threads_front.svg"),
+        Path("snap_threads/snap_threads_top.svg"),
+        Path("snap_threads/gallery.html"),
+    )
+    for path in paths:
+        assert path.stat().st_size > 0
+    gallery = (tmp_path / "multiconnect_rail" / "gallery.html").read_text(encoding="utf-8")
+    assert "multiconnect_rail_back.svg" in gallery
 
 
 def test_connector_slots_are_at_source_z_centers() -> None:

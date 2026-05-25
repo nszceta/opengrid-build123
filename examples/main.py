@@ -37,7 +37,20 @@ from opengrid_build123 import (
 )
 
 _DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
+_Vector3 = tuple[float, float, float]
+_VerificationView = tuple[str, _Vector3, _Vector3]
 
+_MULTICONNECT_RAIL_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("multiconnect_rail_iso.svg", (48.0, -72.0, 56.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_rail_back.svg", (0.0, -96.0, 35.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_rail_top.svg", (0.0, 0.0, 96.0), (0.0, 1.0, 0.0)),
+)
+
+_SNAP_THREAD_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("snap_threads_iso.svg", (28.0, -36.0, 24.0), (0.0, 0.0, 1.0)),
+    ("snap_threads_front.svg", (0.0, -48.0, 3.4), (0.0, 0.0, 1.0)),
+    ("snap_threads_top.svg", (0.0, 0.0, 48.0), (0.0, 1.0, 0.0)),
+)
 
 class _DisplayShape(Protocol):
     def translate(self, vector: tuple[float, float, float]) -> object: ...
@@ -294,8 +307,8 @@ def _show_objects(
 def _export_svg_projection(
     shape: _DisplayShape,
     path: Path,
-    viewport_origin: tuple[float, float, float],
-    viewport_up: tuple[float, float, float] = (0.0, 0.0, 1.0),
+    viewport_origin: _Vector3,
+    viewport_up: _Vector3 = (0.0, 0.0, 1.0),
 ) -> None:
     visible, hidden = cast(Any, shape).project_to_viewport(viewport_origin, viewport_up=viewport_up)
     exporter = bd.ExportSVG(scale=8.0, margin=2.0)
@@ -306,24 +319,50 @@ def _export_svg_projection(
     exporter.write(path)
 
 
-def _export_snap_thread_verification(snap_threads: _DisplayShape, verification_dir: Path) -> tuple[Path, ...]:
+def _export_shape_verification(
+    shape: _DisplayShape,
+    verification_dir: Path,
+    *,
+    title: str,
+    gallery_filename: str,
+    views: tuple[_VerificationView, ...],
+) -> tuple[Path, ...]:
     verification_dir.mkdir(parents=True, exist_ok=True)
-    views = (
-        ("snap_threads_iso.svg", (28.0, -36.0, 24.0), (0.0, 0.0, 1.0)),
-        ("snap_threads_front.svg", (0.0, -48.0, 3.4), (0.0, 0.0, 1.0)),
-        ("snap_threads_top.svg", (0.0, 0.0, 48.0), (0.0, 1.0, 0.0)),
-    )
     paths: list[Path] = []
     for filename, origin, up in views:
         path = verification_dir / filename
-        _export_svg_projection(snap_threads, path, origin, up)
+        _export_svg_projection(shape, path, origin, up)
         paths.append(path)
-    gallery_path = verification_dir / "snap_threads_gallery.html"
-    _write_snap_thread_gallery(paths, gallery_path)
+    gallery_path = verification_dir / gallery_filename
+    _write_verification_gallery(title, paths, gallery_path)
     return (*paths, gallery_path)
 
 
-def _write_snap_thread_gallery(svg_paths: list[Path], gallery_path: Path) -> None:
+def _export_output_verification(
+    *,
+    multiconnect_rail: _DisplayShape,
+    snap_threads: _DisplayShape,
+    verification_dir: Path,
+) -> tuple[Path, ...]:
+    return (
+        *_export_shape_verification(
+            multiconnect_rail,
+            verification_dir / "multiconnect_rail",
+            title="Multiconnect rail verification",
+            gallery_filename="gallery.html",
+            views=_MULTICONNECT_RAIL_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            snap_threads,
+            verification_dir / "snap_threads",
+            title="snap threads verification",
+            gallery_filename="gallery.html",
+            views=_SNAP_THREAD_VERIFICATION_VIEWS,
+        ),
+    )
+
+
+def _write_verification_gallery(title: str, svg_paths: list[Path], gallery_path: Path) -> None:
     figures = "\n".join(
         f'<figure><figcaption>{path.name}</figcaption><img src="{path.name}" alt="{path.name}"></figure>'
         for path in svg_paths
@@ -331,10 +370,10 @@ def _write_snap_thread_gallery(svg_paths: list[Path], gallery_path: Path) -> Non
     gallery_path.write_text(
         "<!doctype html>\n"
         '<html lang="en">\n'
-        "<head><meta charset=\"utf-8\"><title>snap threads verification</title>"
+        f"<head><meta charset=\"utf-8\"><title>{title}</title>"
         "<style>body{font-family:sans-serif}main{display:flex;gap:1rem;flex-wrap:wrap}"
         "figure{margin:0}img{max-width:28rem;border:1px solid #ccc}</style></head>\n"
-        f"<body><h1>snap threads verification</h1><main>{figures}</main></body></html>\n",
+        f"<body><h1>{title}</h1><main>{figures}</main></body></html>\n",
         encoding="utf-8",
     )
 
@@ -377,7 +416,11 @@ def main() -> None:
     bd.export_step(multiconnect_backer, multiconnect_backer_path)
     bd.export_step(multiconnect_delete_tool, multiconnect_delete_tool_path)
     bd.export_step(snap_threads, snap_threads_path)
-    snap_thread_verification_paths = _export_snap_thread_verification(snap_threads, verification_dir)
+    verification_paths = _export_output_verification(
+        multiconnect_rail=multiconnect_rail,
+        snap_threads=snap_threads,
+        verification_dir=verification_dir,
+    )
 
     viewer = _section(config, "viewer")
     if _as_bool(viewer, "show"):
@@ -402,7 +445,7 @@ def main() -> None:
         multiconnect_backer_path,
         multiconnect_delete_tool_path,
         snap_threads_path,
-        *snap_thread_verification_paths,
+        *verification_paths,
     )
     print(
         "\n".join(str(path) for path in output_paths)

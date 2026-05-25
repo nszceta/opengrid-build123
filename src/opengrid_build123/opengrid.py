@@ -531,11 +531,14 @@ def build_multiconnect_delete_tool(config: MulticonnectConfig = MulticonnectConf
     config.validate()
     tool_config = replace(config, part_kind=MulticonnectPartKind.CONNECTOR_RAIL_DELETE_TOOL)
     profile = build_multiconnect_profile(tool_config)
+    spec = _multiconnect_dimensions(config)
     tool = _multiconnect_linear_tool(profile, config.length + 2.0 * _EPSILON)
     if config.rounding is not MulticonnectRounding.NONE:
         tool = cast(Shape, tool + _multiconnect_end_cap(profile, at_end=False))
     if config.rounding is MulticonnectRounding.BOTH_SIDES:
         tool = cast(Shape, tool + _multiconnect_end_cap(profile, at_end=True).translate((0.0, 0.0, config.length)))
+    if config.dimples_enabled:
+        tool = tool - _multiconnect_dimples(config, spec.dimple_radius, config.length)
     if config.on_ramps_enabled:
         tool = cast(Shape, tool + _multiconnect_on_ramps(config, profile))
     return cast(Shape, tool)
