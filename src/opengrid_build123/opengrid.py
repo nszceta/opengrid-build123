@@ -45,6 +45,7 @@ __all__ = [
     "build_connector_slot_delete_tool",
     "build_adjacent_grid_connector",
     "build_multiconnect_profile",
+    "build_multiconnect_part",
     "build_multiconnect_rail",
     "build_multiconnect_receiver",
     "build_multiconnect_backer",
@@ -1043,6 +1044,28 @@ def build_multiconnect_profile(config: MulticonnectConfig = MulticonnectConfig()
     )
 
 
+def build_multiconnect_part(config: MulticonnectConfig = MulticonnectConfig()) -> Shape:
+    """Build the Multiconnect solid selected by ``config.part_kind``."""
+
+    config.validate()
+    if config.part_kind is MulticonnectPartKind.CONNECTOR_ROUND:
+        return _multiconnect_round_connector(config, double_sided=False)
+    if config.part_kind is MulticonnectPartKind.CONNECTOR_RAIL:
+        return build_multiconnect_rail(config)
+    if config.part_kind is MulticonnectPartKind.CONNECTOR_DOUBLE_SIDED_ROUND:
+        return _multiconnect_round_connector(config, double_sided=True)
+    if config.part_kind is MulticonnectPartKind.CONNECTOR_DOUBLE_SIDED_RAIL:
+        return _multiconnect_double_sided(build_multiconnect_rail(config))
+    if config.part_kind is MulticonnectPartKind.CONNECTOR_RAIL_DELETE_TOOL:
+        return build_multiconnect_delete_tool(config)
+    if config.part_kind in {
+        MulticonnectPartKind.RECEIVER_OPEN_ENDED,
+        MulticonnectPartKind.RECEIVER_PASSTHROUGH,
+    }:
+        return build_multiconnect_receiver(config)
+    return build_multiconnect_backer(config)
+
+
 def build_multiconnect_rail(config: MulticonnectConfig = MulticonnectConfig()) -> Shape:
     """Build a male Multiconnect rail from the mirrored dovetail profile.
 
@@ -1066,26 +1089,17 @@ def build_multiconnect_rail(config: MulticonnectConfig = MulticonnectConfig()) -
 
 def build_multiconnect_delete_tool(config: MulticonnectConfig = MulticonnectConfig()) -> Shape:
     """Build the receiver/backer negative tool for a Multiconnect rail slot."""
+
     config.validate()
-    tool_config = replace(config, part_kind=MulticonnectPartKind.CONNECTOR_RAIL_DELETE_TOOL)
-    profile = build_multiconnect_profile(tool_config)
-    spec = _multiconnect_dimensions(config)
-    tool = _multiconnect_linear_tool(profile, config.length + 2.0 * _EPSILON)
-    if config.rounding is not MulticonnectRounding.NONE:
-        tool = cast(Shape, tool + _multiconnect_end_cap(profile, at_end=False))
-    if config.rounding is MulticonnectRounding.BOTH_SIDES:
-        tool = cast(Shape, tool + _multiconnect_end_cap(profile, at_end=True).translate((0.0, 0.0, config.length)))
-    if config.dimples_enabled:
-        tool = tool - _multiconnect_dimples(config, spec.dimple_radius, config.length)
-    if config.on_ramps_enabled:
-        tool = cast(Shape, tool + _multiconnect_on_ramps(config, profile))
-    return cast(Shape, tool)
+    return _multiconnect_slot_tool(replace(config, part_kind=MulticonnectPartKind.CONNECTOR_RAIL_DELETE_TOOL))
 
 
 def build_multiconnect_receiver(config: MulticonnectConfig = MulticonnectConfig()) -> Shape:
     """Build a single Multiconnect receiver block with one rail slot."""
+
     config.validate()
-    slot_config = replace(config, part_kind=MulticonnectPartKind.RECEIVER_OPEN_ENDED)
+    part_kind = _multiconnect_receiver_part_kind(config)
+    slot_config = replace(config, part_kind=part_kind)
     profile = build_multiconnect_profile(slot_config)
     slot_width = _multiconnect_profile_width(profile)
     slot_depth = _multiconnect_profile_depth(profile)
@@ -1094,14 +1108,18 @@ def build_multiconnect_receiver(config: MulticonnectConfig = MulticonnectConfig(
         slot_depth + config.receiver_back_thickness,
         config.length,
     ).translate((0.0, (slot_depth + config.receiver_back_thickness) / 2.0, config.length / 2.0))
-    tool = build_multiconnect_delete_tool(slot_config).translate((0.0, config.receiver_back_thickness, -_EPSILON))
+    tool = _multiconnect_slot_tool(slot_config).translate(
+        (0.0, config.receiver_back_thickness, _multiconnect_slot_z_offset(slot_config, profile))
+    )
     return cast(Shape, body - tool)
 
 
 def build_multiconnect_backer(config: MulticonnectConfig = MulticonnectConfig()) -> Shape:
     """Build a Multiconnect slotted backer with openGrid-spaced slot columns."""
+
     config.validate()
-    backer_config = replace(config, part_kind=MulticonnectPartKind.BACKER_OPEN_ENDED)
+    part_kind = _multiconnect_backer_part_kind(config)
+    backer_config = replace(config, part_kind=part_kind)
     profile = build_multiconnect_profile(backer_config)
     slot_depth = _multiconnect_profile_depth(profile)
     slot_count = max(1, math.floor(config.width / config.grid_size))
@@ -1109,12 +1127,41 @@ def build_multiconnect_backer(config: MulticonnectConfig = MulticonnectConfig())
     body = bd.Box(effective_width, slot_depth + config.receiver_back_thickness, config.length).translate(
         (0.0, (slot_depth + config.receiver_back_thickness) / 2.0, config.length / 2.0)
     )
-    slot_tool = build_multiconnect_delete_tool(backer_config)
+    slot_tool = _multiconnect_slot_tool(backer_config)
     slots = [
-        slot_tool.translate((x_offset, config.receiver_back_thickness, -_EPSILON))
+        slot_tool.translate(
+            (x_offset, config.receiver_back_thickness, _multiconnect_slot_z_offset(backer_config, profile))
+        )
         for x_offset in _multiconnect_slot_x_offsets(slot_count, config.grid_size)
     ]
     return cast(Shape, body - _fuse(slots))
+
+
+def _multiconnect_receiver_part_kind(config: MulticonnectConfig) -> MulticonnectPartKind:
+    if config.part_kind is MulticonnectPartKind.RECEIVER_PASSTHROUGH:
+        return MulticonnectPartKind.RECEIVER_PASSTHROUGH
+    return MulticonnectPartKind.RECEIVER_OPEN_ENDED
+
+
+def _multiconnect_backer_part_kind(config: MulticonnectConfig) -> MulticonnectPartKind:
+    if config.part_kind is MulticonnectPartKind.BACKER_PASSTHROUGH:
+        return MulticonnectPartKind.BACKER_PASSTHROUGH
+    return MulticonnectPartKind.BACKER_OPEN_ENDED
+
+
+def _multiconnect_is_open_ended_receiver(part_kind: MulticonnectPartKind) -> bool:
+    return part_kind in {
+        MulticonnectPartKind.RECEIVER_OPEN_ENDED,
+        MulticonnectPartKind.BACKER_OPEN_ENDED,
+    }
+
+
+def _multiconnect_slot_z_offset(config: MulticonnectConfig, profile: Sequence[Point2D]) -> float:
+    if not _multiconnect_is_open_ended_receiver(config.part_kind):
+        return -_EPSILON
+    return -(_multiconnect_profile_width(profile) / 2.0 + config.receiver_top_wall_thickness)
+
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -1236,37 +1283,98 @@ def _multiconnect_end_cap(profile: Sequence[Point2D], *, at_end: bool) -> Shape:
     return cast(Shape, revolved & half_space)
 
 
+def _multiconnect_round_connector(config: MulticonnectConfig, *, double_sided: bool) -> Shape:
+    round_config = replace(config, part_kind=MulticonnectPartKind.CONNECTOR_ROUND)
+    profile = build_multiconnect_profile(round_config)
+    round_connector = cast(
+        Shape,
+        _multiconnect_end_cap(profile, at_end=False)
+        + _multiconnect_end_cap(profile, at_end=True),
+    )
+    if config.dimples_enabled:
+        spec = _multiconnect_dimensions(config)
+        round_connector = cast(
+            Shape,
+            round_connector - _multiconnect_dimples(config, spec.dimple_radius, 0.0),
+        )
+    if not double_sided:
+        return round_connector
+    return _multiconnect_double_sided(round_connector)
+
+
+def _multiconnect_double_sided(shape: Shape) -> Shape:
+    return cast(Shape, shape + shape.rotate(bd.Axis.Z, 180.0))
+
+
+def _multiconnect_slot_tool(config: MulticonnectConfig) -> Shape:
+    profile = build_multiconnect_profile(config)
+    spec = _multiconnect_dimensions(config)
+    tool = _multiconnect_linear_tool(profile, config.length + 2.0 * _EPSILON)
+    if config.rounding is not MulticonnectRounding.NONE:
+        tool = cast(Shape, tool + _multiconnect_end_cap(profile, at_end=False))
+    if config.rounding is MulticonnectRounding.BOTH_SIDES:
+        tool = cast(
+            Shape,
+            tool + _multiconnect_end_cap(profile, at_end=True).translate((0.0, 0.0, config.length)),
+        )
+    if config.dimples_enabled:
+        tool = cast(Shape, tool - _multiconnect_dimples(config, spec.dimple_radius, config.length))
+    if config.on_ramps_enabled:
+        tool = cast(Shape, tool + _multiconnect_on_ramps(config, profile))
+    return tool
+
+
+
+
 def _multiconnect_dimples(config: MulticonnectConfig, dimple_radius: float, length: float) -> Shape:
     dimple_size = dimple_radius * config.dimple_scale
-    spacing = config.grid_size
-    count = math.ceil(length / spacing) + 1
     dimples = [
         bd.Cone(dimple_size, 0.0, dimple_size + _EPSILON, rotation=(90.0, 0.0, 0.0)).translate(
-            (0.0, -_EPSILON, min(index * spacing, length))
+            (0.0, -_EPSILON, z_offset)
         )
-        for index in range(count)
+        for z_offset in _multiconnect_dimple_z_offsets(length, config.grid_size)
     ]
     return _fuse(dimples)
+
+
+def _multiconnect_dimple_z_offsets(length: float, spacing: float) -> tuple[float, ...]:
+    if length <= _EPSILON:
+        return (0.0,)
+    count = math.ceil(length / spacing) + 1
+    start = -length + length % spacing
+    return tuple(start + index * spacing for index in range(count))
 
 
 def _multiconnect_on_ramps(config: MulticonnectConfig, profile: Sequence[Point2D]) -> Shape:
     radius = _multiconnect_profile_width(profile) / 2.0
     depth = _multiconnect_profile_depth(profile)
-    spacing = config.grid_size * config.on_ramp_every_n_holes
-    start = config.grid_size * config.on_ramp_start_offset
-    count = max(1, math.floor(max(0.0, config.length - start) / spacing) + 1)
     ramps = [
-        bd.Cone(radius + 1.75, radius, depth + 2.0 * _EPSILON, rotation=(90.0, 0.0, 0.0)).translate(
-            (0.0, depth / 2.0, min(start + index * spacing, config.length))
+        bd.Cone(radius + 1.5, radius, depth + 2.0 * _EPSILON, rotation=(90.0, 0.0, 0.0)).translate(
+            (0.0, depth / 2.0, z_offset)
         )
-        for index in range(count)
+        for z_offset in _multiconnect_on_ramp_z_offsets(config)
     ]
+    if not ramps:
+        return bd.Part()
     bounds = bd.Box(
-        _multiconnect_profile_width(profile),
+        2.0 * (radius + 1.5),
         depth,
         config.length + _multiconnect_profile_width(profile) + 2.0 * _EPSILON,
     ).translate((0.0, depth / 2.0, config.length / 2.0))
     return cast(Shape, _fuse(ramps) & bounds)
+
+
+def _multiconnect_on_ramp_z_offsets(config: MulticonnectConfig) -> tuple[float, ...]:
+    spacing = config.grid_size * config.on_ramp_every_n_holes
+    start = config.grid_size * config.on_ramp_start_offset
+    if _multiconnect_is_open_ended_receiver(config.part_kind):
+        start += spacing
+    count = math.floor(config.length / spacing) + 1
+    return tuple(
+        z_offset
+        for index in range(count)
+        if (z_offset := start + index * spacing) <= config.length + _EPSILON
+    )
 
 
 def _multiconnect_slot_x_offsets(slot_count: int, grid_size: float) -> tuple[float, ...]:

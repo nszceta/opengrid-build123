@@ -12,7 +12,7 @@ Implemented:
 - Snap thread, snap body, and self-expanding snap primitives
 - Assembled snap products with bare, basic-thread, self-expanding, openConnect, or Multiconnect attachments
 - Snap-thread-backed openConnect and Multiconnect screws, openConnect heads, Multiconnect heads, and cosmetic text engraving
-- Multiconnect profile, rail, receiver, backer, and rail-delete-tool builders
+- Multiconnect profile, part-kind, rail, receiver, backer, and rail-delete-tool builders
 - STEP/STL export, OCP VS Code viewer example, and SVG verification galleries
 
 ## Requirements
@@ -23,7 +23,9 @@ Implemented:
 `build123d` is sourced directly from GitHub:
 
 ```toml
-build123d = { git = "https://github.com/gumyr/build123d" }
+dependencies = [
+    "build123d @ git+https://github.com/gumyr/build123d",
+]
 ```
 
 ## Setup
@@ -46,7 +48,7 @@ Supported `--kind` values:
 
 ## Export STEP files and visual verification galleries
 
-The unified example reads `examples/config.yaml` by default. Edit that file to configure boards, adjacent-grid connector objects, Multiconnect rails/receivers/backers/delete tools, snap primitives, assembled snap products, snap-thread-backed screws, STEP output, SVG verification, and optional OCP viewer display.
+The unified example reads `examples/config.yaml` by default. Edit that file to configure boards, adjacent-grid connector objects, every Multiconnect part kind, snap primitives, assembled snap products, snap-thread-backed screws, STEP output, SVG verification, and optional OCP viewer display.
 
 Export the configured objects as one STEP file per object and generate visual verification galleries:
 
@@ -54,7 +56,7 @@ Export the configured objects as one STEP file per object and generate visual ve
 uv run examples/main.py --config examples/config.yaml
 ```
 
-Verification SVGs are grouped by component under `output/verification/<component>/gallery.html`. Each gallery contains multiple views for every defined variant of that component, for example:
+Verification SVGs are grouped by component under `output/verification/<component>/gallery.html`, with a top-level index at `output/verification/gallery.html`. Each gallery contains multiple views for every defined variant of that component, for example:
 
 ```text
 output/verification/
@@ -63,6 +65,7 @@ output/verification/
   snap_body/gallery.html
   expanding_snap/gallery.html
   multiconnect_rail/gallery.html
+  multiconnect_parts/gallery.html
   openconnect_screw/gallery.html
 ```
 
@@ -81,7 +84,7 @@ from opengrid_build123 import (
     OpenGridSnapKind,
     SnapBodyConfig,
     SnapThreadConfig,
-    build_multiconnect_rail,
+    build_multiconnect_part,
     build_open_grid,
     build_opengrid_snap,
     export_grid,
@@ -98,7 +101,7 @@ snap = build_opengrid_snap(
         threads=SnapThreadConfig(),
     )
 )
-rail = build_multiconnect_rail(MulticonnectConfig(length=56.0))
+rail = build_multiconnect_part(MulticonnectConfig(length=56.0))
 ```
 
 ## Verification
@@ -116,10 +119,10 @@ Current test coverage checks:
 - Overall corner chamfers cutting through the full tile height
 - Connector snap slots centered in side height
 - Stacked interface layer spacing
-- Complete-tile and available-space fill placement
+- Complete-tile and large available-space fill placement
 - Snap thread, snap body, expanding snap, assembled snap, screw, engraving, and Multiconnect behavior
 - Reference-source parity checks for snap body, expanding snap, and Multiconnect source dimensions/envelopes
-- Variant SVG verification galleries under `output/verification/<component>/gallery.html`
+- Variant SVG verification galleries and top-level verification index under `output/verification/`
 
 ## Project layout
 

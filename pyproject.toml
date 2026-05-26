@@ -7,7 +7,7 @@ version = "0.1.0"
 description = "build123d conversion of the parametric openGrid generator"
 requires-python = ">=3.13,<3.15"
 dependencies = [
-    "build123d",
+    "build123d @ git+https://github.com/gumyr/build123d",
     "ocp-vscode>=3.4.0",
     "pyyaml>=6.0.3",
 ]
@@ -21,9 +21,6 @@ dev = [
     "pytest>=9.0.3",
     "pytest-xdist>=3.8.0",
 ]
-
-[tool.uv.sources]
-build123d = { git = "https://github.com/gumyr/build123d" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

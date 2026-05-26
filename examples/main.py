@@ -40,6 +40,7 @@ from opengrid_build123 import (
     TextEngravingConfig,
     TextLabel,
     build_multiconnect_profile,
+    build_multiconnect_part,
     build_openconnect_head,
     build_openconnect_screw,
     build_multiconnect_head,
@@ -155,6 +156,7 @@ _MULTICONNECT_SCREW_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
 class _DisplayShape(Protocol):
     def translate(self, vector: tuple[float, float, float]) -> object: ...
 _VerificationVariant = tuple[str, _DisplayShape, tuple[_VerificationView, ...]]
+_MulticonnectPartShape = tuple[MulticonnectPartKind, _DisplayShape]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -707,6 +709,13 @@ def _multiconnect_profile_variants() -> tuple[MulticonnectProfile, ...]:
     return tuple(MulticonnectProfile)
 
 
+def _multiconnect_part_shapes(config: MulticonnectConfig) -> tuple[_MulticonnectPartShape, ...]:
+    return tuple(
+        (part_kind, build_multiconnect_part(replace(config, part_kind=part_kind)))
+        for part_kind in MulticonnectPartKind
+    )
+
+
 
 def _export_output_verification(
     *,
@@ -885,6 +894,11 @@ def _export_variant_output_verification(
             verification_dir / "multiconnect_delete_tool",
             "Multiconnect delete tool variant verification",
         ),
+        *_export_component_variant_verification(
+            _multiconnect_part_verification_variants(multiconnect_config),
+            verification_dir / "multiconnect_parts",
+            "Multiconnect part-kind variant verification",
+        ),
         *_export_component_variant_verification(_snap_thread_verification_variants(snap_thread_config), verification_dir / "snap_threads", "snap thread variant verification"),
         *_export_component_variant_verification(_snap_body_verification_variants(snap_body_config), verification_dir / "snap_body", "snap body variant verification"),
         *_export_component_variant_verification(
@@ -933,7 +947,41 @@ def _board_verification_variants(config: GridConfig) -> tuple[_VerificationVaria
         )
         for mode in FillSpaceMode
     )
-    return (*kind_variants, *fill_variants)
+    side_variants = tuple(
+        (
+            f"connector_side_{side}",
+            build_open_grid(_connector_side_variant_config(config, side)),
+            _BOARD_VERIFICATION_VIEWS,
+        )
+        for side in ("right", "left", "top", "bottom")
+    )
+    stacking_variants = (
+        (
+            "stacking_interface_layer",
+            build_open_grid(replace(config, stack_count=2, stacking_method=StackingMethod.INTERFACE_LAYER)),
+            _BOARD_VERIFICATION_VIEWS,
+        ),
+        (
+            "stacking_ironing",
+            build_open_grid(replace(config, stack_count=2, stacking_method=StackingMethod.IRONING)),
+            _BOARD_VERIFICATION_VIEWS,
+        ),
+    )
+    return (*kind_variants, *fill_variants, *side_variants, *stacking_variants)
+
+
+def _connector_side_variant_config(config: GridConfig, side: str) -> GridConfig:
+    return replace(
+        config,
+        board_width=max(2, config.board_width),
+        board_height=max(2, config.board_height),
+        connector_holes=True,
+        connector_holes_right=side == "right",
+        connector_holes_left=side == "left",
+        connector_holes_top=side == "top",
+        connector_holes_bottom=side == "bottom",
+        fill_space_mode=FillSpaceMode.NONE,
+    )
 
 
 def _slot_delete_tool_verification_variants(config: ConnectorSlotDeleteToolConfig) -> tuple[_VerificationVariant, ...]:
@@ -991,6 +1039,27 @@ def _multiconnect_delete_tool_verification_variants(config: MulticonnectConfig) 
         )
         for profile in _multiconnect_profile_variants()
     )
+
+
+def _multiconnect_part_verification_variants(config: MulticonnectConfig) -> tuple[_VerificationVariant, ...]:
+    return tuple(
+        (
+            f"part_{_slug(part_kind.value)}",
+            shape,
+            _multiconnect_part_views(part_kind),
+        )
+        for part_kind, shape in _multiconnect_part_shapes(config)
+    )
+
+
+def _multiconnect_part_views(part_kind: MulticonnectPartKind) -> tuple[_VerificationView, ...]:
+    if part_kind in {MulticonnectPartKind.BACKER_OPEN_ENDED, MulticonnectPartKind.BACKER_PASSTHROUGH}:
+        return _MULTICONNECT_BACKER_VERIFICATION_VIEWS
+    if part_kind in {MulticonnectPartKind.RECEIVER_OPEN_ENDED, MulticonnectPartKind.RECEIVER_PASSTHROUGH}:
+        return _MULTICONNECT_RECEIVER_VERIFICATION_VIEWS
+    if part_kind is MulticonnectPartKind.CONNECTOR_RAIL_DELETE_TOOL:
+        return _MULTICONNECT_DELETE_TOOL_VERIFICATION_VIEWS
+    return _MULTICONNECT_RAIL_VERIFICATION_VIEWS
 
 
 def _snap_thread_verification_variants(config: SnapThreadConfig) -> tuple[_VerificationVariant, ...]:
@@ -1128,6 +1197,26 @@ def _write_verification_gallery(title: str, svg_paths: list[Path], gallery_path:
     )
 
 
+def _write_verification_index(title: str, paths: tuple[Path, ...], index_path: Path) -> Path:
+    gallery_paths = sorted(
+        (path for path in paths if path.name == "gallery.html"),
+        key=lambda path: path.parent.name,
+    )
+    links = "\n".join(
+        f'<li><a href="{gallery.relative_to(index_path.parent).as_posix()}">{gallery.parent.name}</a></li>'
+        for gallery in gallery_paths
+    )
+    index_path.write_text(
+        "<!doctype html>\n"
+        '<html lang="en">\n'
+        f"<head><meta charset=\"utf-8\"><title>{title}</title>"
+        "<style>body{font-family:sans-serif}li{margin:0.35rem 0}</style></head>\n"
+        f"<body><h1>{title}</h1><ul>{links}</ul></body></html>\n",
+        encoding="utf-8",
+    )
+    return index_path
+
+
 def main() -> None:
     args = _parse_args()
     config = _load_config(args.config)
@@ -1173,6 +1262,7 @@ def main() -> None:
     multiconnect_receiver = build_multiconnect_receiver(multiconnect_config)
     multiconnect_backer = build_multiconnect_backer(multiconnect_config)
     multiconnect_delete_tool = build_multiconnect_delete_tool(multiconnect_config)
+    multiconnect_parts = _multiconnect_part_shapes(multiconnect_config)
     snap_threads = build_snap_threads(snap_thread_config)
     snap_body = build_snap_body(snap_body_config)
     expanding_snap = build_expanding_snap(expanding_snap_config)
@@ -1200,6 +1290,10 @@ def main() -> None:
     opengrid_snap_path = output_dir / "opengrid_snap.step"
     openconnect_screw_path = output_dir / "openconnect_screw.step"
     multiconnect_screw_path = output_dir / "multiconnect_screw.step"
+    multiconnect_part_paths = tuple(
+        output_dir / f"multiconnect_{_slug(part_kind.value)}.step"
+        for part_kind, _shape in multiconnect_parts
+    )
     bd.export_step(grid, grid_path)
     bd.export_step(slot_delete_tool, slot_delete_tool_path)
     bd.export_step(adjacent_connector, adjacent_connector_path)
@@ -1215,6 +1309,8 @@ def main() -> None:
     bd.export_step(opengrid_snap, opengrid_snap_path)
     bd.export_step(openconnect_screw, openconnect_screw_path)
     bd.export_step(multiconnect_screw, multiconnect_screw_path)
+    for path, (_part_kind, shape) in zip(multiconnect_part_paths, multiconnect_parts):
+        bd.export_step(cast(Any, shape), path)
     verification_paths = _export_variant_output_verification(
         board_config=board_config,
         slot_delete_tool_config=slot_delete_tool_config,
@@ -1230,6 +1326,16 @@ def main() -> None:
         openconnect_screw_config=openconnect_screw_config,
         multiconnect_screw_config=multiconnect_screw_config,
         verification_dir=verification_dir,
+    )
+    verification_gallery_path = _write_verification_index(
+        "openGrid visual verification index",
+        verification_paths,
+        verification_dir / "gallery.html",
+    )
+    verification_index_path = _write_verification_index(
+        "openGrid visual verification index",
+        verification_paths,
+        verification_dir / "index.html",
     )
 
     viewer = _section(config, "viewer")
@@ -1267,6 +1373,9 @@ def main() -> None:
         opengrid_snap_path,
         openconnect_screw_path,
         multiconnect_screw_path,
+        *multiconnect_part_paths,
+        verification_gallery_path,
+        verification_index_path,
         *verification_paths,
     )
     print(
