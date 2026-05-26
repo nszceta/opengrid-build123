@@ -54,6 +54,7 @@ from opengrid_build123.opengrid import (
     build_expanding_snap,
     build_opengrid_snap,
     _connector_z_base,
+    _connector_slot_delete_tool_base,
     _connector_positions,
     build_open_grid,
     _OG_SNAP_THREADS_PROFILE,
@@ -215,6 +216,7 @@ def test_example_config_exhaustively_lists_config_dataclass_fields() -> None:
     config = _example_config()
 
     assert set(_mapping_section(config, "output")) == {"directory"}
+    assert set(_mapping_section(config, "verification")) == {"enabled", "variant_galleries"}
     assert set(_mapping_section(config, "viewer")) == {
         "show",
         "port",
@@ -632,6 +634,24 @@ def test_adjacent_grid_connector_is_double_sided_and_fits_slot_tool() -> None:
     assert connector.volume > build_connector_slot_delete_tool(slot_config).volume
 
 
+def test_connector_slot_delete_tool_cache_returns_distinct_public_shapes() -> None:
+    config = ConnectorSlotDeleteToolConfig()
+    _connector_slot_delete_tool_base.cache_clear()
+
+    first = build_connector_slot_delete_tool(config)
+    second = build_connector_slot_delete_tool(config)
+    cache_info = _connector_slot_delete_tool_base.cache_info()
+
+    assert first is not second
+    assert cache_info.misses == 1
+    assert cache_info.hits == 1
+    first_size = first.bounding_box().size
+    second_size = second.bounding_box().size
+    assert (float(first_size.X), float(first_size.Y), float(first_size.Z)) == pytest.approx(
+        (float(second_size.X), float(second_size.Y), float(second_size.Z))
+    )
+
+
 def test_adjacent_grid_connector_fit_clearance_changes_envelope() -> None:
     tight = build_adjacent_grid_connector(AdjacentGridConnectorConfig(fit_clearance=0.0))
     loose = build_adjacent_grid_connector(AdjacentGridConnectorConfig(fit_clearance=0.2))
@@ -885,6 +905,17 @@ def test_output_dir_rejects_blank_directory() -> None:
     with pytest.raises(SystemExit):
         example_main._output_dir({"output": {"directory": "   "}})
 
+def test_verification_config_requires_explicit_flags() -> None:
+    example_main = _example_main()
+
+    config = {"verification": {"enabled": True, "variant_galleries": False}}
+    verification = example_main._verification_config(config)
+    assert verification.enabled is True
+    assert verification.variant_galleries is False
+
+    with pytest.raises(SystemExit):
+        example_main._verification_config({"verification": {"enabled": True}})
+
 
 def test_variant_verification_defines_every_public_enum_variant() -> None:
     example_main = _example_main()
@@ -947,6 +978,77 @@ def test_prepare_output_dir_removes_stale_output_tree(tmp_path: Path) -> None:
     assert output_dir.is_dir()
     assert not stale_file.exists()
 
+
+def test_export_verification_outputs_honors_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    example_main = _example_main()
+    configured_calls: list[dict[str, Any]] = []
+    variant_calls: list[dict[str, Any]] = []
+
+    def configured_export(**kwargs: Any) -> tuple[Path, ...]:
+        configured_calls.append(kwargs)
+        return (tmp_path / "configured" / "gallery.html",)
+
+    def variant_export(**kwargs: Any) -> tuple[Path, ...]:
+        variant_calls.append(kwargs)
+        return (tmp_path / "variant" / "gallery.html",)
+
+    monkeypatch.setattr(example_main, "_export_output_verification", configured_export)
+    monkeypatch.setattr(example_main, "_export_variant_output_verification", variant_export)
+
+    shape = cast(Any, object())
+    snap_threads = SnapThreadConfig(height=4.0)
+    snap_body = SnapBodyConfig(thickness=4.0)
+    expanding = ExpandingSnapConfig(snap_body=snap_body, threads=snap_threads)
+    common_args = {
+        "grid": shape,
+        "slot_delete_tool": shape,
+        "adjacent_connector": shape,
+        "multiconnect_rail": shape,
+        "multiconnect_receiver": shape,
+        "multiconnect_backer": shape,
+        "multiconnect_delete_tool": shape,
+        "snap_threads": shape,
+        "snap_body": shape,
+        "expanding_snap": shape,
+        "openconnect_head": shape,
+        "multiconnect_head": shape,
+        "opengrid_snap": shape,
+        "openconnect_screw": shape,
+        "multiconnect_screw": shape,
+        "board_config": GridConfig(),
+        "slot_delete_tool_config": ConnectorSlotDeleteToolConfig(),
+        "adjacent_connector_config": AdjacentGridConnectorConfig(),
+        "multiconnect_config": MulticonnectConfig(),
+        "snap_thread_config": snap_threads,
+        "snap_body_config": snap_body,
+        "expanding_snap_config": expanding,
+        "openconnect_head_config": OpenConnectHeadConfig(),
+        "connector_slot_config": ConnectorSlotConfig(),
+        "multiconnect_head_config": MulticonnectHeadConfig(),
+        "opengrid_snap_config": OpenGridSnapConfig(snap_body=snap_body, threads=snap_threads, expanding_snap=expanding),
+        "openconnect_screw_config": OpenConnectScrewConfig(threads=snap_threads),
+        "multiconnect_screw_config": MulticonnectScrewConfig(threads=snap_threads),
+        "verification_dir": tmp_path,
+    }
+
+    disabled = example_main._export_verification_outputs(
+        verification_config=example_main._VerificationConfig(enabled=False, variant_galleries=True),
+        **common_args,
+    )
+    configured = example_main._export_verification_outputs(
+        verification_config=example_main._VerificationConfig(enabled=True, variant_galleries=False),
+        **common_args,
+    )
+    variant = example_main._export_verification_outputs(
+        verification_config=example_main._VerificationConfig(enabled=True, variant_galleries=True),
+        **common_args,
+    )
+
+    assert disabled == ()
+    assert configured == (tmp_path / "configured" / "gallery.html",)
+    assert variant == (tmp_path / "variant" / "gallery.html",)
+    assert len(configured_calls) == 1
+    assert len(variant_calls) == 1
 
 def test_output_verification_exports_shape_svgs_into_named_subdirectories(tmp_path: Path) -> None:
     rail = build_multiconnect_rail(MulticonnectConfig(length=28.0, rounding=MulticonnectRounding.NONE))

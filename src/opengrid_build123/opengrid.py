@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from enum import StrEnum
 from pathlib import Path
 from typing import Iterable, Sequence, TypeAlias, cast
@@ -855,6 +856,12 @@ def build_connector_slot_delete_tool(
     licensed CC BY-NC-SA 4.0.
     """
     config.validate()
+    return _copy_shape(_connector_slot_delete_tool_base(config))
+
+
+@lru_cache(maxsize=128)
+def _connector_slot_delete_tool_base(config: ConnectorSlotDeleteToolConfig) -> Shape:
+    config.validate()
     flare_height = config.separation * 2.0 - (config.dimple_radius - config.separation)
     with bd.BuildSketch() as profile:
         with bd.Locations((-config.radius - 0.1, 0.0), (config.radius - 0.1, 0.0)):
@@ -876,6 +883,12 @@ def build_connector_slot_delete_tool(
             mode=bd.Mode.INTERSECT,
         )
     return cast(Shape, bd.extrude(profile.sketch, amount=config.height))
+
+
+def _copy_shape(shape: Shape) -> Shape:
+    return shape.translate((0.0, 0.0, 0.0))
+
+
 def build_adjacent_grid_connector(
     config: AdjacentGridConnectorConfig = AdjacentGridConnectorConfig(),
 ) -> Shape:
@@ -2354,13 +2367,34 @@ def _connector_tool(config: GridConfig, thickness: float, kind: BoardKind, posit
     z_base = _connector_z_base(thickness, kind, config.connector_slot_delete_tool.height)
     width = config.board_width * config.tile_size
     height = config.board_height * config.tile_size
+    base_tool = _connector_slot_delete_tool_base(config.connector_slot_delete_tool)
     if side == "right":
-        return _right_connector_slot_delete_tool(config, width / 2.0, offset, z_base)
+        return _right_connector_slot_delete_tool(
+            base_tool,
+            edge=width / 2.0,
+            offset=offset,
+            z_base=z_base,
+        )
     if side == "left":
-        return _left_connector_slot_delete_tool(config, width / 2.0, offset, z_base)
+        return _left_connector_slot_delete_tool(
+            base_tool,
+            edge=width / 2.0,
+            offset=offset,
+            z_base=z_base,
+        )
     if side == "top":
-        return _top_connector_slot_delete_tool(config, height / 2.0, offset, z_base)
-    return _bottom_connector_slot_delete_tool(config, height / 2.0, offset, z_base)
+        return _top_connector_slot_delete_tool(
+            base_tool,
+            edge=height / 2.0,
+            offset=offset,
+            z_base=z_base,
+        )
+    return _bottom_connector_slot_delete_tool(
+        base_tool,
+        edge=height / 2.0,
+        offset=offset,
+        z_base=z_base,
+    )
 
 
 def _connector_z_base(
@@ -2377,53 +2411,43 @@ def _connector_z_base(
 
 
 def _right_connector_slot_delete_tool(
-    config: GridConfig,
+    base_tool: Shape,
+    *,
     edge: float,
     offset: float,
     z_base: float,
 ) -> Shape:
-    return (
-        build_connector_slot_delete_tool(config.connector_slot_delete_tool)
-        .rotate(bd.Axis.Z, 180.0)
-        .translate((edge + _EPSILON, offset, z_base))
-    )
+    return base_tool.rotate(bd.Axis.Z, 180.0).translate((edge + _EPSILON, offset, z_base))
 
 
 def _left_connector_slot_delete_tool(
-    config: GridConfig,
+    base_tool: Shape,
+    *,
     edge: float,
     offset: float,
     z_base: float,
 ) -> Shape:
-    return build_connector_slot_delete_tool(config.connector_slot_delete_tool).translate(
-        (-edge - _EPSILON, offset, z_base)
-    )
+    return base_tool.translate((-edge - _EPSILON, offset, z_base))
 
 
 def _top_connector_slot_delete_tool(
-    config: GridConfig,
+    base_tool: Shape,
+    *,
     edge: float,
     offset: float,
     z_base: float,
 ) -> Shape:
-    return (
-        build_connector_slot_delete_tool(config.connector_slot_delete_tool)
-        .rotate(bd.Axis.Z, -90.0)
-        .translate((offset, edge + _EPSILON, z_base))
-    )
+    return base_tool.rotate(bd.Axis.Z, -90.0).translate((offset, edge + _EPSILON, z_base))
 
 
 def _bottom_connector_slot_delete_tool(
-    config: GridConfig,
+    base_tool: Shape,
+    *,
     edge: float,
     offset: float,
     z_base: float,
 ) -> Shape:
-    return (
-        build_connector_slot_delete_tool(config.connector_slot_delete_tool)
-        .rotate(bd.Axis.Z, 90.0)
-        .translate((offset, -edge - _EPSILON, z_base))
-    )
+    return base_tool.rotate(bd.Axis.Z, 90.0).translate((offset, -edge - _EPSILON, z_base))
 
 
 def _adhesive_base(config: GridConfig) -> Shape:
@@ -2480,29 +2504,80 @@ def _fill_complete_tiles(config: GridConfig) -> Shape:
 
 
 def _place_complete_tiles(config: GridConfig, max_wide: int, max_deep: int, rem_width: int, rem_depth: int) -> Shape:
+    base_tiles: dict[tuple[int, int], Shape] = {}
     pieces: list[Shape] = []
     for x in range(max_wide):
         for y in range(max_deep):
-            pieces.append(_placed_tile(config, x * config.max_tile_width, y * config.max_tile_depth, config.max_tile_width, config.max_tile_depth))
-    _append_remainder_tiles(pieces, config, max_wide, max_deep, rem_width, rem_depth)
+            pieces.append(
+                _placed_tile(
+                    config,
+                    x * config.max_tile_width,
+                    y * config.max_tile_depth,
+                    config.max_tile_width,
+                    config.max_tile_depth,
+                    base_tiles,
+                )
+            )
+    _append_remainder_tiles(pieces, config, max_wide, max_deep, rem_width, rem_depth, base_tiles)
     return _compound(pieces)
 
 
-def _append_remainder_tiles(pieces: list[Shape], config: GridConfig, max_wide: int, max_deep: int, rem_width: int, rem_depth: int) -> None:
+def _append_remainder_tiles(
+    pieces: list[Shape],
+    config: GridConfig,
+    max_wide: int,
+    max_deep: int,
+    rem_width: int,
+    rem_depth: int,
+    base_tiles: dict[tuple[int, int], Shape],
+) -> None:
     for y in range(max_deep):
         if rem_width > 0:
-            pieces.append(_placed_tile(config, max_wide * config.max_tile_width, y * config.max_tile_depth, rem_width, config.max_tile_depth))
+            pieces.append(
+                _placed_tile(
+                    config,
+                    max_wide * config.max_tile_width,
+                    y * config.max_tile_depth,
+                    rem_width,
+                    config.max_tile_depth,
+                    base_tiles,
+                )
+            )
     for x in range(max_wide):
         if rem_depth > 0:
-            pieces.append(_placed_tile(config, x * config.max_tile_width, max_deep * config.max_tile_depth, config.max_tile_width, rem_depth))
+            pieces.append(
+                _placed_tile(
+                    config,
+                    x * config.max_tile_width,
+                    max_deep * config.max_tile_depth,
+                    config.max_tile_width,
+                    rem_depth,
+                    base_tiles,
+                )
+            )
     if rem_width > 0 and rem_depth > 0:
-        pieces.append(_placed_tile(config, max_wide * config.max_tile_width, max_deep * config.max_tile_depth, rem_width, rem_depth))
+        pieces.append(
+            _placed_tile(
+                config,
+                max_wide * config.max_tile_width,
+                max_deep * config.max_tile_depth,
+                rem_width,
+                rem_depth,
+                base_tiles,
+            )
+        )
 
 
-def _placed_tile(config: GridConfig, x_cells: int, y_cells: int, width: int, height: int) -> Shape:
-    tile_config = replace(config, board_width=width, board_height=height, fill_space_mode=FillSpaceMode.NONE)
+def _placed_tile(
+    config: GridConfig,
+    x_cells: int,
+    y_cells: int,
+    width: int,
+    height: int,
+    base_tiles: dict[tuple[int, int], Shape],
+) -> Shape:
     spacing = config.tile_size + config.tile_spacing
-    return _single_board(tile_config, config.kind).translate((x_cells * spacing, y_cells * spacing, 0.0))
+    return _base_tile(config, width, height, base_tiles).translate((x_cells * spacing, y_cells * spacing, 0.0))
 
 
 def _fill_available_space(config: GridConfig) -> Shape:
@@ -2529,7 +2604,7 @@ def _place_partitioned_tiles(config: GridConfig, tile_widths: Sequence[int], til
         y = 0.0
         for depth in tile_depths:
             pieces.append(
-                _partitioned_tile(config, width, depth, base_tiles).translate(
+                _base_tile(config, width, depth, base_tiles).translate(
                     (x + width * config.tile_size / 2.0, y + depth * config.tile_size / 2.0, 0.0)
                 )
             )
@@ -2538,7 +2613,7 @@ def _place_partitioned_tiles(config: GridConfig, tile_widths: Sequence[int], til
     return _compound(pieces)
 
 
-def _partitioned_tile(
+def _base_tile(
     config: GridConfig,
     width_cells: int,
     height_cells: int,
@@ -2546,7 +2621,12 @@ def _partitioned_tile(
 ) -> Shape:
     key = (width_cells, height_cells)
     if key not in base_tiles:
-        tile_config = replace(config, board_width=width_cells, board_height=height_cells, fill_space_mode=FillSpaceMode.NONE)
+        tile_config = replace(
+            config,
+            board_width=width_cells,
+            board_height=height_cells,
+            fill_space_mode=FillSpaceMode.NONE,
+        )
         base_tiles[key] = _single_board(tile_config, config.kind)
     return base_tiles[key]
 
@@ -2559,10 +2639,9 @@ def _compound(shapes: Sequence[Shape]) -> Shape:
 def _fuse(shapes: Sequence[Shape]) -> Shape:
     if not shapes:
         return bd.Part()
-    result = shapes[0]
-    for shape in shapes[1:]:
-        result = result + shape
-    return cast(Shape, result)
+    if len(shapes) == 1:
+        return shapes[0]
+    return cast(Shape, shapes[0].fuse(*shapes[1:]))
 
 def _openconnect_head_profile(config: OpenConnectHeadConfig, *, top: bool) -> tuple[Point2D, ...]:
     width = config.small_rect_width if top else config.large_rect_width

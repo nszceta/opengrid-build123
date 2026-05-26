@@ -61,6 +61,15 @@ from opengrid_build123 import (
 _DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 _Vector3 = tuple[float, float, float]
 _VerificationView = tuple[str, _Vector3, _Vector3]
+
+class _VerificationConfig:
+    __slots__ = ("enabled", "variant_galleries")
+
+    def __init__(self, *, enabled: bool, variant_galleries: bool) -> None:
+        self.enabled = enabled
+        self.variant_galleries = variant_galleries
+
+
 _VISIBLE_SVG_STROKE_WIDTH = "0.08"
 
 
@@ -261,6 +270,14 @@ def _output_dir(config: dict[str, Any]) -> Path:
 
 def _verification_dir(config: dict[str, Any]) -> Path:
     return _output_dir(config) / "verification"
+
+
+def _verification_config(config: dict[str, Any]) -> _VerificationConfig:
+    verification = _section(config, "verification")
+    return _VerificationConfig(
+        enabled=_as_bool(verification, "enabled"),
+        variant_galleries=_as_bool(verification, "variant_galleries"),
+    )
 
 
 def _prepare_output_dir(path: Path) -> None:
@@ -1197,6 +1214,78 @@ def _write_verification_gallery(title: str, svg_paths: list[Path], gallery_path:
     )
 
 
+def _export_verification_outputs(
+    *,
+    verification_config: _VerificationConfig,
+    grid: _DisplayShape,
+    slot_delete_tool: _DisplayShape,
+    adjacent_connector: _DisplayShape,
+    multiconnect_rail: _DisplayShape,
+    multiconnect_receiver: _DisplayShape,
+    multiconnect_backer: _DisplayShape,
+    multiconnect_delete_tool: _DisplayShape,
+    snap_threads: _DisplayShape,
+    snap_body: _DisplayShape,
+    expanding_snap: _DisplayShape,
+    openconnect_head: _DisplayShape,
+    multiconnect_head: _DisplayShape,
+    opengrid_snap: _DisplayShape,
+    openconnect_screw: _DisplayShape,
+    multiconnect_screw: _DisplayShape,
+    board_config: GridConfig,
+    slot_delete_tool_config: ConnectorSlotDeleteToolConfig,
+    adjacent_connector_config: AdjacentGridConnectorConfig,
+    multiconnect_config: MulticonnectConfig,
+    snap_thread_config: SnapThreadConfig,
+    snap_body_config: SnapBodyConfig,
+    expanding_snap_config: ExpandingSnapConfig,
+    openconnect_head_config: OpenConnectHeadConfig,
+    connector_slot_config: ConnectorSlotConfig,
+    multiconnect_head_config: MulticonnectHeadConfig,
+    opengrid_snap_config: OpenGridSnapConfig,
+    openconnect_screw_config: OpenConnectScrewConfig,
+    multiconnect_screw_config: MulticonnectScrewConfig,
+    verification_dir: Path,
+) -> tuple[Path, ...]:
+    if not verification_config.enabled:
+        return ()
+    if not verification_config.variant_galleries:
+        return _export_output_verification(
+            grid=grid,
+            slot_delete_tool=slot_delete_tool,
+            adjacent_connector=adjacent_connector,
+            multiconnect_rail=multiconnect_rail,
+            multiconnect_receiver=multiconnect_receiver,
+            multiconnect_backer=multiconnect_backer,
+            multiconnect_delete_tool=multiconnect_delete_tool,
+            snap_threads=snap_threads,
+            snap_body=snap_body,
+            expanding_snap=expanding_snap,
+            openconnect_head=openconnect_head,
+            multiconnect_head=multiconnect_head,
+            opengrid_snap=opengrid_snap,
+            openconnect_screw=openconnect_screw,
+            multiconnect_screw=multiconnect_screw,
+            verification_dir=verification_dir,
+        )
+    return _export_variant_output_verification(
+        board_config=board_config,
+        slot_delete_tool_config=slot_delete_tool_config,
+        adjacent_connector_config=adjacent_connector_config,
+        multiconnect_config=multiconnect_config,
+        snap_thread_config=snap_thread_config,
+        snap_body_config=snap_body_config,
+        expanding_snap_config=expanding_snap_config,
+        openconnect_head_config=openconnect_head_config,
+        connector_slot_config=connector_slot_config,
+        multiconnect_head_config=multiconnect_head_config,
+        opengrid_snap_config=opengrid_snap_config,
+        openconnect_screw_config=openconnect_screw_config,
+        multiconnect_screw_config=multiconnect_screw_config,
+        verification_dir=verification_dir,
+    )
+
+
 def _write_verification_index(title: str, paths: tuple[Path, ...], index_path: Path) -> Path:
     gallery_paths = sorted(
         (path for path in paths if path.name == "gallery.html"),
@@ -1223,6 +1312,7 @@ def main() -> None:
     output_dir = _output_dir(config)
     _prepare_output_dir(output_dir)
     verification_dir = output_dir / "verification"
+    verification_config = _verification_config(config)
 
     adjacent_connector_config = _adjacent_connector_config(config)
     slot_delete_tool_config = adjacent_connector_config.slot_delete_tool
@@ -1311,7 +1401,23 @@ def main() -> None:
     bd.export_step(multiconnect_screw, multiconnect_screw_path)
     for path, (_part_kind, shape) in zip(multiconnect_part_paths, multiconnect_parts):
         bd.export_step(cast(Any, shape), path)
-    verification_paths = _export_variant_output_verification(
+    verification_paths = _export_verification_outputs(
+        verification_config=verification_config,
+        grid=grid,
+        slot_delete_tool=slot_delete_tool,
+        adjacent_connector=adjacent_connector,
+        multiconnect_rail=multiconnect_rail,
+        multiconnect_receiver=multiconnect_receiver,
+        multiconnect_backer=multiconnect_backer,
+        multiconnect_delete_tool=multiconnect_delete_tool,
+        snap_threads=snap_threads,
+        snap_body=snap_body,
+        expanding_snap=expanding_snap,
+        openconnect_head=openconnect_head,
+        multiconnect_head=multiconnect_head,
+        opengrid_snap=opengrid_snap,
+        openconnect_screw=openconnect_screw,
+        multiconnect_screw=multiconnect_screw,
         board_config=board_config,
         slot_delete_tool_config=slot_delete_tool_config,
         adjacent_connector_config=adjacent_connector_config,
@@ -1327,16 +1433,19 @@ def main() -> None:
         multiconnect_screw_config=multiconnect_screw_config,
         verification_dir=verification_dir,
     )
-    verification_gallery_path = _write_verification_index(
-        "openGrid visual verification index",
-        verification_paths,
-        verification_dir / "gallery.html",
-    )
-    verification_index_path = _write_verification_index(
-        "openGrid visual verification index",
-        verification_paths,
-        verification_dir / "index.html",
-    )
+    verification_index_paths: tuple[Path, ...] = ()
+    if verification_paths:
+        verification_gallery_path = _write_verification_index(
+            "openGrid visual verification index",
+            verification_paths,
+            verification_dir / "gallery.html",
+        )
+        verification_index_path = _write_verification_index(
+            "openGrid visual verification index",
+            verification_paths,
+            verification_dir / "index.html",
+        )
+        verification_index_paths = (verification_gallery_path, verification_index_path)
 
     viewer = _section(config, "viewer")
     if _as_bool(viewer, "show"):
@@ -1374,8 +1483,7 @@ def main() -> None:
         openconnect_screw_path,
         multiconnect_screw_path,
         *multiconnect_part_paths,
-        verification_gallery_path,
-        verification_index_path,
+        *verification_index_paths,
         *verification_paths,
     )
     print(

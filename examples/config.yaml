@@ -15,6 +15,16 @@ output:
   # The directory is deleted and recreated on every example run.
   directory: output/
 
+verification:
+  # Purpose: Control SVG visual verification exports under output/verification/.
+  # enabled=false skips SVG verification entirely while keeping STEP exports.
+  # variant_galleries=false writes configured-object galleries only; true writes
+  # exhaustive component variant galleries for visual regression review.
+  # Recommended: keep both true when intentionally reviewing geometry coverage;
+  # disable variant_galleries for faster local/export runs.
+  enabled: true
+  variant_galleries: true
+
 viewer:
   # Purpose: Show generated objects in OCP CAD Viewer after exporting files.
   # Recommended: false for scripted verification and CI; true only when the OCP
