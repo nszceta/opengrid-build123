@@ -220,3 +220,4 @@ __marimo__/
 IMPLEMENTATION_TODO.md
 PLAN.md
 output/
+.kata.local.toml
