@@ -40,7 +40,7 @@ The fork has no Lite/Heavy boards, screw holes, positive connector, snaps, threa
 
 Where the SCAD sources and the official STEPs disagree, the official STEPs side with the fork. Examples: the edge-connector neck is R2.7951 with a 5.134 mouth in the official STEPs (SCAD: R2.7, 5.3), and the Multiconnect slot-opening radius is 11.0.
 
-### Discrepancies in our geometry (fix issues filed, label `fix`)
+### Discrepancies in our geometry
 
 | Area | Ours wrong |
 | --- | --- |
