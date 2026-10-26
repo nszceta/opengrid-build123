@@ -68,7 +68,7 @@ All 31 fix issues above are closed. Each child report has a "Resolution" entry f
 
 The audit was run and verified on 2026-10-25 (America/New_York). Paths are relative to the repo root.
 
-**This repo:** base commit `e42e7e8de19e3039152a62480e0c6aba4fe5ba41` ("feat: control verification exports and reuse geometry"). The fixes are uncommitted working-tree changes on top of that commit.
+**This repo:** the audit measured base commit `e42e7e8de19e3039152a62480e0c6aba4fe5ba41` ("feat: control verification exports and reuse geometry"). The fixes and the post-fix verification below are in commit `8bd08e8` ("fix: align generated geometry with openGrid reference sources").
 
 **Reference repositories (HEAD at the time of the audit):**
 
