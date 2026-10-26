@@ -1,7 +1,5 @@
 # Snap threads dimension audit
 
-Kata: opengrid-build123#hxyt (parent #enag)
-
 ## Scope
 
 - `build_snap_threads()` with `SnapThreadConfig` and `ThreadType.BLUNT` / `ThreadType.BASIC` (`src/opengrid_build123/opengrid.py:241-268`, `:1870-2009`, constants `:97-113`).
@@ -56,25 +54,25 @@ Kata: opengrid-build123#hxyt (parent #enag)
 | Pitch | 3.000 (crest centres 2.554→5.556 at 0°; 1.054→4.055 at 180°) | 3 (0.5+1+0.5+1), p1 | — | 3.000 (0.304→3.304, 1.804→4.804) | match |
 | Crest flat / root flat | 0.5 / 0.5 (profile `opengrid.py:101-106`) | 0.5 / 0.5, p1 | — | 0.5 / 0.5 (`opengrid_base.scad:18-23`) | match |
 | Flank angle | 45° (half-plane 53.5°: Δr 0.8655 = Δz 0.8655) | 45° (1 axial : 1 radial), p1 | — | 45° | match |
-| Profile accuracy vs ideal (bevel-free region) | max \|err\| 0.0315–0.0325, p99 0.023 (STEP and fresh builds) | — | — | max \|err\| 0.0026 | ours wrong. Corners are chorded between the 0/90/180/270° breakpoints (`opengrid.py:1989-1998`). #ztaw |
+| Profile accuracy vs ideal (bevel-free region) | max \|err\| 0.0315–0.0325, p99 0.023 (STEP and fresh builds) | — | — | max \|err\| 0.0026 | ours wrong. Corners are chorded between the 0/90/180/270° breakpoints (`opengrid.py:1989-1998`). |
 | Handedness | right (crest z rises with CCW angle) | not stated | — | right (BOSL2 default `left_handed=false`) | match |
 | Starts | 1 | not stated | — | 1 | match |
 | Phase c, Basic, standalone frame | 2.554 | not stated | — | 2.554 (`generic_threaded_rod` centred + `zrot(53.5)`, :132-136) | match |
-| Phase c, Blunt, standalone frame (STEP, screws) | **1.305** (crest 4.305 at 0°) | not stated | — | 2.554 (same as Basic; zrot+up at :93-95 leaves the helix unchanged) | ours wrong. `_snap_thread_blunt_z_shift` (`opengrid.py:1933-1940`) shifts z without rotating: −1.25 mm = 150° of seat rotation. #qw1z |
+| Phase c, Blunt, standalone frame (STEP, screws) | **1.305** (crest 4.305 at 0°) | not stated | — | 2.554 (same as Basic; zrot+up at :93-95 leaves the helix unchanged) | ours wrong. `_snap_thread_blunt_z_shift` (`opengrid.py:1933-1940`) shifts z without rotating: −1.25 mm = 150° of seat rotation. |
 | Thread height / Z anchoring (standalone) | z 0…6.8, centred XY (bbox) | not stated | — | z 0…6.8 (anchor BOTTOM) | match |
-| Blunt: thread at thread-frame z=0 | absent below z≈1.05 (2.0 bevel clamp); rmax 7.25 at z 0.01–0.5 | — | — | full profile to z=0 (rmax 8.25 at z 0.01). `snap_threads` passes no bevels to `blunt_threads` (:134, defaults :77) | ours wrong. #qw1z |
-| Blunt: helix end (blunt start) | none; thread to z≈6.79 at every angle; `blunt_cutoff` only clamps the z=h slice to root (`opengrid.py:1956-1957`) | — | — | helix starts at z −1.25, turns (h−1.5)/3+0.5, 10° lead-in taper (`:83-99`). Thread ends at z 6.727/4.501/5.251/6.001 at 0/90/180/270° | ours wrong. #qw1z |
-| Blunt: top bevel 0.5 at z=h | applied (rmax 7.75 at z 6.8) | — | — | not applied | ours wrong. #qw1z |
-| `blunt_cutoff` semantics | clamp at z=h | — | — | removes helix overhang below z=0 (:102-103) | ours wrong (different end and meaning). #qw1z |
-| Basic: bevel at thread-frame z=0 | 2.0 (r = 6.25+z, clamped to 7.25) | — | — | 0.5 (`bevel1=top_bevel`, :136): r 7.76 at z 0.01 | ours wrong (ends swapped). #9cx5 |
-| Basic: bevel at thread-frame z=h | 0.5 (r 7.76 at 6.79) | — | — | 2.0 (`bevel2`), cone through core: rmin 6.25 (cl 0.5) / 6.00 (cl 0) at the face | ours wrong. #9cx5 |
-| Basic: core chamfer | none (`clamp_to_root`, `opengrid.py:1958-1959`) | Positive: tip core chamfer 1×1 (Ø14→Ø12). Negative: lip 0.8×45° + 0.2 land to Ø12.9 | — | Positive tip Ø12.00 (matches PDF). Negative lip 1.0×45° to Ø12.5 at the face, no land | ours wrong (no chamfer or lip). SCAD vs PDF on the negative lip: spec ambiguous (Ø12.5 vs Ø12.9). #9cx5 |
+| Blunt: thread at thread-frame z=0 | absent below z≈1.05 (2.0 bevel clamp); rmax 7.25 at z 0.01–0.5 | — | — | full profile to z=0 (rmax 8.25 at z 0.01). `snap_threads` passes no bevels to `blunt_threads` (:134, defaults :77) | ours wrong. |
+| Blunt: helix end (blunt start) | none; thread to z≈6.79 at every angle; `blunt_cutoff` only clamps the z=h slice to root (`opengrid.py:1956-1957`) | — | — | helix starts at z −1.25, turns (h−1.5)/3+0.5, 10° lead-in taper (`:83-99`). Thread ends at z 6.727/4.501/5.251/6.001 at 0/90/180/270° | ours wrong. |
+| Blunt: top bevel 0.5 at z=h | applied (rmax 7.75 at z 6.8) | — | — | not applied | ours wrong. |
+| `blunt_cutoff` semantics | clamp at z=h | — | — | removes helix overhang below z=0 (:102-103) | ours wrong (different end and meaning). |
+| Basic: bevel at thread-frame z=0 | 2.0 (r = 6.25+z, clamped to 7.25) | — | — | 0.5 (`bevel1=top_bevel`, :136): r 7.76 at z 0.01 | ours wrong (ends swapped). |
+| Basic: bevel at thread-frame z=h | 0.5 (r 7.76 at 6.79) | — | — | 2.0 (`bevel2`), cone through core: rmin 6.25 (cl 0.5) / 6.00 (cl 0) at the face | ours wrong. |
+| Basic: core chamfer | none (`clamp_to_root`, `opengrid.py:1958-1959`) | Positive: tip core chamfer 1×1 (Ø14→Ø12). Negative: lip 0.8×45° + 0.2 land to Ø12.9 | — | Positive tip Ø12.00 (matches PDF). Negative lip 1.0×45° to Ø12.5 at the face, no land | ours wrong (no chamfer or lip). SCAD vs PDF on the negative lip: spec ambiguous (Ø12.5 vs Ø12.9). |
 | Bevel selection by height | 2.0 if h≥6.8, 1.2 if h≥3.4, else 0 (`opengrid.py:1963-1968`) | — | — | same (:125-128) | match |
 | Lite h=4.0 / 3.4 | bbox z 0…4.0 / 0…3.4, Ø16.5 | — | — | same anchoring | match (bevel and blunt issues above still apply) |
 | Blunt offset_height | uses bottom bevel (2.0/1.2) in `min(h−1.5−bb,0)` (`opengrid.py:1939`) | — | — | `bottom_bevel` = 0 here (:86, the call at :134 passes none) | match for h≥2.7 (both 0). Diverges only for custom h<2.7 |
-| Multiconnect screw thread (head frame) | z 4.0…10.8, phase 1.304, no thread for the first 1.05 mm next to the head, full thread at the tip, tip core Ø14 | Positive: thread up to the head side, tip chamfer to Ø12 | — | z 4.0…10.8, phase 2.554, full thread from the head, blunt helix end at the tip, tip core Ø14 (Blunt) | ours wrong (phase, bevel ends, blunt end). Default Blunt SCAD also lacks the PDF tip chamfer (PDF vs SCAD: spec ambiguous). #qw1z |
-| Basic Threads snap: thread as hole vs stud | **stud unioned on top**: bbox z 0…13.59, centre solid (`opengrid.py:1037`, `:2698-2701`) | Negative = cut tool | — | threaded hole through the 6.8 body (`inside=true` ⇒ `remove`, BOSL2 `attachments.scad:765`). Thread frame turned 180° about Y: hole phase 2.748 (predicted 6.8−1.5−2.554 = 2.746) | ours wrong. #eytx |
-| Screw seated in snap | — | — | — | `up(h+head) yrot(180)` (`:448-455`) maps the screw thread onto the hole exactly (phase 2.746 = 2.748) | n/a for ours until #eytx and #qw1z are fixed |
+| Multiconnect screw thread (head frame) | z 4.0…10.8, phase 1.304, no thread for the first 1.05 mm next to the head, full thread at the tip, tip core Ø14 | Positive: thread up to the head side, tip chamfer to Ø12 | — | z 4.0…10.8, phase 2.554, full thread from the head, blunt helix end at the tip, tip core Ø14 (Blunt) | ours wrong (phase, bevel ends, blunt end). Default Blunt SCAD also lacks the PDF tip chamfer (PDF vs SCAD: spec ambiguous). |
+| Basic Threads snap: thread as hole vs stud | **stud unioned on top**: bbox z 0…13.59, centre solid (`opengrid.py:1037`, `:2698-2701`) | Negative = cut tool | — | threaded hole through the 6.8 body (`inside=true` ⇒ `remove`, BOSL2 `attachments.scad:765`). Thread frame turned 180° about Y: hole phase 2.748 (predicted 6.8−1.5−2.554 = 2.746) | ours wrong. |
+| Screw seated in snap | — | — | — | `up(h+head) yrot(180)` (`:448-455`) maps the screw thread onto the hole exactly (phase 2.746 = 2.748) | n/a for ours until the Basic Threads hole and Blunt thread fixes land |
 | `output/snap_threads.step` vs builder | bbox ±8.249 × 0…6.8, vol 1249.31, phase 1.305, same ray profile as `build_snap_threads()` | — | — | — | export matches the builder; inherits the Blunt issues |
 | fork coverage | — | — | no thread code | — | n/a-coverage gap |
 | QuackWorks coverage | — | — | — | no openGrid snap threads (only Multiboard Ø6.747 threads) | n/a-coverage gap |
@@ -101,23 +99,23 @@ All core thread dimensions match the PDF and SCAD within 0.01 mm: Ø16/Ø14 exte
 
 ## Proposed fix issues
 
-- **opengrid-build123#eytx**: Basic Threads snap. Subtract the thread tool instead of unioning it. Turn it 180° about Y with thread-frame z=0 at the snap top, using h+EPS and shiftout as in SCAD. `reverse_threads_entryside` then removes that flip.
-- **opengrid-build123#qw1z**: Blunt thread rework.
+- Basic Threads snap. Subtract the thread tool instead of unioning it. Turn it 180° about Y with thread-frame z=0 at the snap top, using h+EPS and shiftout as in SCAD. `reverse_threads_entryside` then removes that flip.
+- Blunt thread rework.
   - Make the z shift phase-preserving, or drop it and model only the helix start and end.
   - Apply no bevels.
   - Give the helix a finite length: start at z −1.25 (clipped at 0), turns (h−1.5)/p+0.5, 10° lead-in taper at the thread-frame top.
   - Make `blunt_cutoff` remove the below-zero overhang.
-- **opengrid-build123#9cx5**: Basic bevels.
+- Basic bevels.
   - Swap the ends: `top_bevel` at thread-frame z=0, `bottom_bevel` at z=h.
   - Let the bevel cone cut through the core (no root clamp).
   - Decide whether to follow SCAD (Ø12.5 lip, 1.0 cone) or the PDF negative (0.8 chamfer + 0.2 land, Ø12.9) for the cut tool.
-- **opengrid-build123#ztaw** (priority 3): improve the loft so the profile corners are exact at every angular segment, or use a true helical sweep.
+- Priority 3: improve the loft so the profile corners are exact at every angular segment, or use a true helical sweep.
 
 ## Resolution
 
 `build_snap_threads()` now lofts the thread profile along its helix (one radial section every 2.5°, exact profile corners in each section) and fuses it to a root-diameter core. It is compared with fresh OpenSCAD renders of `snap_threads` (in-tree BOSL2, `$fa=1; $fs=0.4`) by mesh boolean and by the same ray probes as above.
 
-- **#qw1z**: Blunt follows `blunt_threads`. It has the Basic helix phase: at +X the crest spans z 2.204–2.904 at r 7.9, so the crest centre is at 2.554. It has no bevels, and the full profile runs down to z=0 (r 8.053 at 0°, z 0.0005; SCAD 8.053). The helix starts at crest z min(h−1.5,0)−1.25 and ends at crest z h−1.25, followed by the BOSL2 sqrt lead-in over 10°. Thread top at 0/90/180/270° (r>7.26 ray, same method on both): 6.758/4.542/5.292/6.042. The SCAD render gives 6.770/4.544/5.294/6.044. `blunt_cutoff` now removes the helix below z=0; `False` keeps it (bbox z −2.5). Mesh difference vs SCAD at 6.8 / cl 0.5: ours−SCAD 0.004 mm³, SCAD−ours 0.49 mm³ (the SCAD core is +EPS). At 4.0 and 3.4 the differences are ≤0.33 mm³; at 1.005 with no cutoff, ≤0.34 mm³. Screws therefore get the full thread at the head and the blunt end at the tip.
-- **#9cx5**: Basic has `top_bevel` at z=0 (r 7.75 at z 0.0005; SCAD 7.749) and the bottom bevel at z=h. Both cones cut through the core: rmin at the z=h face is 6.25 at cl 0.5 (SCAD 6.249), and the screw tip at cl 0 is Ø12.00. The cut tool follows SCAD (1.0×45° cone to Ø12.5, no land) per source precedence; the PDF Ø12.9 lip is not used. Mesh difference vs SCAD at 6.8 / cl 0.5: 0.17/0.08 mm³. At 4.0 and 3.4 it is ≤0.11 mm³.
-- **#ztaw**: The ideal-profile deviation (50 angles × 400 z, bevel-free region) is now max 0.0020 mm for both Basic and Blunt. The SCAD render gives 0.0024. Build time is 3.0 s for Blunt and 4.3 s for Basic; the old loft took 4.6 s and 4.4 s.
-- **#eytx**: `build_opengrid_snap(BASIC_THREADS)` subtracts `build_snap_threads(height=t+EPS)`, turned 180° about Y with its frame z=0 at t+EPS/2. With `reverse_threads_entryside` it is unflipped from −EPS/2. Bbox z 0…6.8, and the axis is open. Against the SCAD composition `diff() cuboid attach(TOP,BOTTOM,inside=true,shiftout=EPS/2) snap_threads(6.8+EPS)`, the mesh difference is 0.22/0.48 mm³ (Basic) and 0.62/0.19 mm³ (Blunt). A clearance-0 screw thread seated as in `:448-455` interferes 0.000 mm³. Unflipped it interferes 14.7 mm³; with the old X-axis flip, 61.7 mm³.
+- Blunt follows `blunt_threads`. It has the Basic helix phase: at +X the crest spans z 2.204–2.904 at r 7.9, so the crest centre is at 2.554. It has no bevels, and the full profile runs down to z=0 (r 8.053 at 0°, z 0.0005; SCAD 8.053). The helix starts at crest z min(h−1.5,0)−1.25 and ends at crest z h−1.25, followed by the BOSL2 sqrt lead-in over 10°. Thread top at 0/90/180/270° (r>7.26 ray, same method on both): 6.758/4.542/5.292/6.042. The SCAD render gives 6.770/4.544/5.294/6.044. `blunt_cutoff` now removes the helix below z=0; `False` keeps it (bbox z −2.5). Mesh difference vs SCAD at 6.8 / cl 0.5: ours−SCAD 0.004 mm³, SCAD−ours 0.49 mm³ (the SCAD core is +EPS). At 4.0 and 3.4 the differences are ≤0.33 mm³; at 1.005 with no cutoff, ≤0.34 mm³. Screws therefore get the full thread at the head and the blunt end at the tip.
+- Basic has `top_bevel` at z=0 (r 7.75 at z 0.0005; SCAD 7.749) and the bottom bevel at z=h. Both cones cut through the core: rmin at the z=h face is 6.25 at cl 0.5 (SCAD 6.249), and the screw tip at cl 0 is Ø12.00. The cut tool follows SCAD (1.0×45° cone to Ø12.5, no land) per source precedence; the PDF Ø12.9 lip is not used. Mesh difference vs SCAD at 6.8 / cl 0.5: 0.17/0.08 mm³. At 4.0 and 3.4 it is ≤0.11 mm³.
+- The ideal-profile deviation (50 angles × 400 z, bevel-free region) is now max 0.0020 mm for both Basic and Blunt. The SCAD render gives 0.0024. Build time is 3.0 s for Blunt and 4.3 s for Basic; the old loft took 4.6 s and 4.4 s.
+- `build_opengrid_snap(BASIC_THREADS)` subtracts `build_snap_threads(height=t+EPS)`, turned 180° about Y with its frame z=0 at t+EPS/2. With `reverse_threads_entryside` it is unflipped from −EPS/2. Bbox z 0…6.8, and the axis is open. Against the SCAD composition `diff() cuboid attach(TOP,BOTTOM,inside=true,shiftout=EPS/2) snap_threads(6.8+EPS)`, the mesh difference is 0.22/0.48 mm³ (Basic) and 0.62/0.19 mm³ (Blunt). A clearance-0 screw thread seated as in `:448-455` interferes 0.000 mm³. Unflipped it interferes 14.7 mm³; with the old X-axis flip, 61.7 mm³.

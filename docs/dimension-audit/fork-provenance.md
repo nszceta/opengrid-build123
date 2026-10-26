@@ -1,7 +1,5 @@
 # Fork provenance: is the makerrepo fork the "official" build123d openGrid?
 
-Kata: `28fx` (parent `enag`). Audit only. No changes to `src/`, `tests/`, or `output/`.
-
 ## Scope
 
 - **Provenance.** Who wrote `../reference_repos/opengrid-build123-makerrepo-fork/`, under what license, and whether the openGrid authors endorse or link it.
@@ -106,8 +104,8 @@ Line refs: FORK = fork repo, QW = QuackWorks, OGP = opengrid-projects, ours = `s
 | Inner fillet | none | — | R0.5 | `r_fillet=0.5` (base.py:32) | none | ours wrong (vs STEP) |
 | Mouth flare | none (built mouth 4.800) | — | R0.25, mouth **5.134** | `r_tiny=0.25` (base.py:33); built 5.134 | QW `:379` R0.25 flare → 5.3 | ours wrong (vs STEP); SCAD disagrees with STEP |
 | Width at depth 0.27 / 1.0 / 1.25 | 4.828 / 5.184 / 5.200 | — | 4.637 / 4.980 / 5.174 | 4.637 / 4.980 / 5.174 | (5.3 mouth, 4.8 neck) | ours wrong (vs STEP) |
-| Negative solid | 56.0269 mm³; diff vs STEP +0.4814 / −0.0161 | — | 55.5616 mm³ | 55.5616; diff **0 / 0** | — | fork match; ours wrong → `jmq8` |
-| Positive connector | 9.8×5.0×2.2, V 94.943 | — | 5.0×9.9227×2.2, V 95.867 (R2.5/R3.25/R0.5) | **not implemented** | QW has the tool only | ours wrong (vs STEP) → `jmq8`; fork: n/a-coverage gap |
+| Negative solid | 56.0269 mm³; diff vs STEP +0.4814 / −0.0161 | — | 55.5616 mm³ | 55.5616; diff **0 / 0** | — | fork match; ours wrong |
+| Positive connector | 9.8×5.0×2.2, V 94.943 | — | 5.0×9.9227×2.2, V 95.867 (R2.5/R3.25/R0.5) | **not implemented** | QW has the tool only | ours wrong (vs STEP); fork: n/a-coverage gap |
 
 ### Multiconnect (fork `RoundHead`, `Slot`, cutters)
 
@@ -116,7 +114,7 @@ Line refs: FORK = fork repo, QW = QuackWorks, OGP = opengrid-projects, ours = `s
 | Head base radius / height | 10 / 1 (`:90-91`, head `:564,:568`) | not dimensioned (PDF-M is threads only) | R10, z 0–1 (`round.step`) | `MULTICONNECT_ROUND_HEAD_BOTTOM_RADIUS=10`, `_BOTTOM_HEIGHT=1` (constants.py:11-12); built R10.0 | QW `multiconnectGenerator.scad:115` `[10,1,2.5,0.5,…]`; QW BOSL `:103`; OGP `opengrid_parametric_snap.scad:131,135` | match |
 | Taper height / top radius | 2.5 / 7.5 | — | z 1→3.5, R7.5 | `TAPER_HEIGHT=2.5`, `TOP_RADIUS=7.5` (constants.py:13-14); built 9.0 @ z=2, 7.5 @ z=3.5 | same refs (`radius−depth2` = 7.5, `generator:300`) | match |
 | Top (neck) height / total | 0.5 / 4.0 (ours head bbox 3.99) | — | z 3.5→4.0 | `TOP_HEIGHT=0.5` (constants.py:15); built 4.0 | OGP `:133,:179` | match (ours 3.99 sits exactly at the 0.01 tolerance limit) |
-| Detent dimple in the wide face | rail/receiver: cone r1 h1 (`:1342-1350`); head `dimple` pattern wrong face (`smfm`) | — | cone R1.05→R0.05, depth 1, at z=0 (`round.step`, `slot.step`, `half-round.step`) | **absent**: RoundHead/Slot solid; fork − official = 1.2121 mm³ (round), 0.6061 (slot); RoundHead minus that cone → diff 0 | QW generator `:262,:284` cone r=1 h=1; OGP `:378-379` d1=2 h=1 | fork wrong (missing feature); ours: see `smfm` |
+| Detent dimple in the wide face | rail/receiver: cone r1 h1 (`:1342-1350`); head `dimple` pattern wrong face | — | cone R1.05→R0.05, depth 1, at z=0 (`round.step`, `slot.step`, `half-round.step`) | **absent**: RoundHead/Slot solid; fork − official = 1.2121 mm³ (round), 0.6061 (slot); RoundHead minus that cone → diff 0 | QW generator `:262,:284` cone r=1 h=1; OGP `:378-379` d1=2 h=1 | fork wrong (missing feature); ours: see `multiconnect-head.md` |
 | Slot length | rail `length` param | — | 28 (`slot.step` Y 37.5–65.5) | `MULTICONNECT_SLOT_LENGTH=28` (constants.py:17) | per-part length | match |
 | Slot widths / heights | from profile | — | 20 / 15, 1 / 2.5 / 0.5 | constants.py:18-22 (derived); built Slot = official except dimple | as head | match |
 | Receiver clearance: radius / bottom height / top height | 0.15 / +0.2121 / 4.15 total (`:1256-1263`; receiver profile `(10.15,1.2121,7.65,3.7121,4.15)`) | — | `Round/Slot Negative`: R10.15/R7.65, z steps 1.2121 / 2.5 / 0.4379 | `+0.15`, `+0.212132034`, `−0.062132034` (multiconnect.py:191-194, 230-233); diff vs STEP **0 / 0** | QW generator `:115,:296-304` (offset 0.15, `sin45·0.3`); QW BOSL `:102` | match |
@@ -172,9 +170,9 @@ The fork's disagreements are with:
    - Mouth 4.800 vs 5.134; neck width at depth 1.0 is 5.184 vs 4.980.
    - Tool volume 56.027 vs 55.562 mm³.
    - Also reflected in boards: ours 2x2 vs official differs by +0.563 / −1.964 mm³.
-   - The proposed SCAD-flare fix `0wy8` (mouth 5.3) would not reach the official geometry either. `0wy8` has since been closed as superseded by `jmq8`.
+   - A SCAD-flare fix (mouth 5.3) would not reach the official geometry either.
 2. **Ours wrong (vs official STEP): positive connector length.** 9.8 vs 9.9227, V 94.94 vs 95.87.
-3. **Ours, already filed (`smfm`): head dimple on the wrong face.** Official STEP and OGP `:378-379` put a 1 mm cone recess in the R10 face. Ours head bbox is 3.99 tall, which is at the tolerance limit.
+3. **Ours: head dimple on the wrong face.** Official STEP and OGP `:378-379` put a 1 mm cone recess in the R10 face. Ours head bbox is 3.99 tall, which is at the tolerance limit.
 4. **Spec ambiguous: Multiconnect on-ramp top radius.** Ours 11.65 (QW generator `:192`); official modeling STEP 11.0; QW BOSL 11.9; old QW design 12.0 with h=5.
 5. **Fork wrong: no detent dimple** (R1.05→R0.05 × 1) on `RoundHead` / `Slot` / `SnapInSlot`.
 6. **Fork wrong: `SnapInSlotCutter` second-head / triangle offset** 0.795 vs official 0.759.
@@ -184,11 +182,11 @@ The fork's disagreements are with:
 
 ## Proposed fix issues
 
-- **Filed `jmq8`** (related `28fx`, `0wy8`): align `build_connector_slot_delete_tool` / board pockets and `build_adjacent_grid_connector` with the official `openGrid Edge Connector (Negative).step`, or explicitly declare QW SCAD normative. A comment on `0wy8` points to it.
-- Not filed, already tracked: head dimple face (`smfm`). The missing-SCAD-flare issue (`0wy8`) was closed by AdjacentConnector as superseded by `jmq8`.
+- Align `build_connector_slot_delete_tool` / board pockets and `build_adjacent_grid_connector` with the official `openGrid Edge Connector (Negative).step`, or explicitly declare QW SCAD normative.
+- Head dimple face: see `multiconnect-head.md`.
 - Not filed (spec ambiguous): on-ramp radius. A project-level decision is needed on whether the official modeling STEPs or the QW generator are normative for Multiconnect receivers.
 - Not filed (fork bugs, outside this repo): fork dimple omission, 0.795 → 0.759, snap-in negative slot length 26.5. These would go upstream to `makerrepo.com/r/fangpenlin/opengrid` if desired.
 
 ## Resolutions
 
-- `#jmq8`: the pocket and the positive connector now match the official Edge Connector STEPs (symmetric difference 0 mm³ for both, and against the official 2×2 pocket region). The same pocket is used for Full, Lite and Heavy.
+- The pocket and the positive connector now match the official Edge Connector STEPs (symmetric difference 0 mm³ for both, and against the official 2×2 pocket region). The same pocket is used for Full, Lite and Heavy.

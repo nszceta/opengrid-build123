@@ -1,7 +1,5 @@
 # QuackWorks update 6123129..e0c1cb7 — impact review
 
-Kata: `opengrid-build123#vxhr` (parent `#enag`).
-
 ## Scope
 
 Review the QuackWorks reference update from `6123129` to `e0c1cb7` (`../reference_repos/QuackWorks`, origin `https://github.com/AndyLevesque/QuackWorks`). Answer two questions:
@@ -19,7 +17,7 @@ Review the QuackWorks reference update from `6123129` to `e0c1cb7` (`../referenc
 - Ours `src/opengrid_build123/opengrid.py`: 280–295 (`SnapBodyConfig` cut defaults), 912–931 (`build_snap_body`), 933–946 (`build_expanding_snap`, line 941 `enable_cuts=False`), 1018–1037 (`build_opengrid_snap`), 1473–1482 (`_snap_body_nubs`), 1573–1613 (`_snap_body_cut_tools`, `_snap_body_bottom_cut`, `_snap_body_side_cut`).
 - `../reference_docs/opengrid-tile-dimensions.pdf` page 1: tile drawing only ("Opengrid Raw Tile"). It has no snap dimensions, so the PDF column is n/a.
 - Fork `../reference_repos/opengrid-build123-makerrepo-fork/opengrid/`: it has no snap body. It only has `BaseSnapSlotCutter` (`base.py:92`), which is the tile-side slot. So the fork column is n/a.
-- Official snap STEPs by David D (Shapr3D export, 2025-08-07), Printables model 1214361. ForkProvenance pointed me to them. I downloaded them anonymously via the Printables GraphQL `getDownloadLink` mutation and kept them outside the repo in `~/.cache/vxhr/`:
+- Official snap STEPs by David D (Shapr3D export, 2025-08-07), Printables model 1214361. ForkProvenance pointed me to them. I downloaded them anonymously via the Printables GraphQL `getDownloadLink` mutation and kept them in a local cache outside the repo:
   - `opengrid-bare-snap.step` (file id 5805721)
   - `opengrid-bare-lite-snap.step` (5805722)
   - `opengrid-bare-directional-snap-v21.step` (5828016)
@@ -40,7 +38,7 @@ Review the QuackWorks reference update from `6123129` to `e0c1cb7` (`../referenc
 
 ## Method
 
-- Built our snaps with the repo builders (throwaway scripts in `/tmp` and `~/.cache/vxhr`, run with `uv run python`, not committed):
+- Built our snaps with the repo builders (throwaway scripts outside the repo, run with `uv run python`, not committed):
   - `build_snap_body(SnapBodyConfig(body_shape=S, thickness=t))` for S ∈ {DIRECTIONAL, SYMMETRIC} and t ∈ {6.8 standard, 3.4 lite}
   - `build_expanding_snap(ExpandingSnapConfig(snap_body=SnapBodyConfig(thickness=t)))`
   - `build_opengrid_snap(OpenGridSnapConfig(snap_body=SnapBodyConfig(thickness=t)))`

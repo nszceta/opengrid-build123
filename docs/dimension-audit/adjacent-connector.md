@@ -1,7 +1,5 @@
 # Adjacent-grid connector and connector slot delete tool
 
-Kata: `opengrid-build123#wj3c` (parent `#enag`).
-
 ## Scope
 
 - `build_connector_slot_delete_tool()` / `ConnectorSlotDeleteToolConfig` → `output/adjacent_grid_connector_slot_delete_tool.step`
@@ -20,7 +18,7 @@ Not in scope: snap slots, screw holes, chamfers, and the board frame profile. Ot
 | QW | `../reference_repos/QuackWorks/openGrid/openGrid.scad:282-283,301-337` (placement), `:344-382` (`connector_cutout_delete_tool`), `:188-208` (Lite), `:231-267` (Heavy). The same tool is copied in `openGrid/openGrid-border.scad:121-154` and `Deskware/Deskware_Main.scad:1842-1870`. |
 | OGP | `../reference_repos/opengrid-projects/openconnect_sturdy_shelf.scad:232-271` (BlackJackDuck `connector_cutout_delete_tool`, the same code as QW). No `lib/*.scad` file defines connector pockets. |
 | BOSL2 | `../reference_repos/BOSL2/shapes2d.scad:101` (semantics of `rect` `corner_flip`) |
-| official | David D's STEPs from Printables model 1214361. Peer ForkProvenance (kata `28fx`, `docs/dimension-audit/fork-provenance.md`) downloaded them to `~/.cache/fork-provenance/official/`; they are not in the repo. Files used here: `opengrid-edge-connector.step` (id 5051325), `opengrid-edge-connector-negative.step` (id 6110232), `opengrid-2x2.step` (id 5051182). |
+| official | David D's STEPs from Printables model 1214361. The fork-provenance audit (`docs/dimension-audit/fork-provenance.md`) downloaded them to `~/.cache/fork-provenance/official/`; they are not in the repo. Files used here: `opengrid-edge-connector.step` (id 5051325), `opengrid-edge-connector-negative.step` (id 6110232), `opengrid-2x2.step` (id 5051182). |
 
 **Authority.** The official STEPs come from the openGrid designer, so they are the tie-break for the pocket and the positive connector. The SCAD sources (QW/OGP) are a community re-implementation and differ from them. The comparison tables keep the mandated `ours | PDF | fork | SCAD` columns and add an `official` column.
 
@@ -80,7 +78,7 @@ Coordinates: x = depth into the board from the board edge, y = lateral (along th
 |---|---|---|---|---|---|---|
 | Full (6.8) pocket Z | 2.2..4.6 | 6.8 thickness (A-A); pocket not shown | 2.2..4.6 (`base.py:284`, `constants.py:5`) | 2.2..4.6 (`openGrid.scad:305,322`) | 2.2..4.6 (2x2 probe) | match |
 | Lite (4.0) pocket Z | 0.6..3.0 | — | n/a (no Lite) | 0.595..2.995 (`:198-199,305`) | n/a (no Lite STEP) | match (Δ 0.005) |
-| Heavy (13.8) pocket Z | **one pocket 5.7..8.1** (straddles the 0.2 gap) | — | n/a | **two pockets** 2.2..4.6 and 9.2..11.6 (`:239-247,258-267`) | n/a | **ours wrong** (fix `39p1`) |
+| Heavy (13.8) pocket Z | **one pocket 5.7..8.1** (straddles the 0.2 gap) | — | n/a | **two pockets** 2.2..4.6 and 9.2..11.6 (`:239-247,258-267`) | n/a | **ours wrong** |
 
 ### Positive connector
 
@@ -115,11 +113,11 @@ Coordinates: x = depth into the board from the board edge, y = lateral (along th
 
 ## Proposed fix issues
 
-- `opengrid-build123#jmq8` (filed by ForkProvenance; I added my fit measurements as a comment): match the delete tool and the positive connector to the official Edge Connector STEPs. Delete tool: R2.7951 boss, R0.5 fillet, R0.25 mouth rounding, 5.134 mouth. Positive: R3.25/R0.5 profile, 10.0 length, tip notch.
-- `opengrid-build123#39p1` (filed by the Lite/Heavy audit; my duplicate `h79s` is closed): Heavy boards get two pockets, at 2.2..4.6 and 9.2..11.6.
-- `opengrid-build123#0wy8`: closed, superseded by `jmq8`. Its 5.30 target came from SCAD and is not the official geometry.
+- Match the delete tool and the positive connector to the official Edge Connector STEPs. Delete tool: R2.7951 boss, R0.5 fillet, R0.25 mouth rounding, 5.134 mouth. Positive: R3.25/R0.5 profile, 10.0 length, tip notch.
+- Heavy boards get two pockets, at 2.2..4.6 and 9.2..11.6.
+- An earlier proposal to widen the mouth to 5.30 came from SCAD and is not the official geometry.
 
 ## Resolutions
 
-- `#jmq8`: the pocket is a port of the official negative (fork `ConnectorCutter`). The symmetric difference against `opengrid-edge-connector-negative.step` is 0 / 0 mm³ (V 55.5616). The Full 2×2 pocket region against official `opengrid-2x2.step` is 0 / 0 mm³. The positive connector is rebuilt from the official profile (R2.5 lobes, R3.25 reliefs at ±5.5, R0.5 fillets, 45° 0.6-deep notch). The symmetric difference against `opengrid-edge-connector.step` is 0 / 0 mm³ (V 95.8668). It has zero interference in the official 2×2 board and in our Full board (both orientations), our Lite board, and both Heavy pockets. The `dimple_radius`, `separation`, `flare_width` and `fit_clearance` fields were removed.
-- `#39p1`: Heavy pockets are at z 2.2..4.6 and 9.2..11.6.
+- The pocket is a port of the official negative (fork `ConnectorCutter`). The symmetric difference against `opengrid-edge-connector-negative.step` is 0 / 0 mm³ (V 55.5616). The Full 2×2 pocket region against official `opengrid-2x2.step` is 0 / 0 mm³. The positive connector is rebuilt from the official profile (R2.5 lobes, R3.25 reliefs at ±5.5, R0.5 fillets, 45° 0.6-deep notch). The symmetric difference against `opengrid-edge-connector.step` is 0 / 0 mm³ (V 95.8668). It has zero interference in the official 2×2 board and in our Full board (both orientations), our Lite board, and both Heavy pockets. The `dimple_radius`, `separation`, `flare_width` and `fit_clearance` fields were removed.
+- Heavy pockets are at z 2.2..4.6 and 9.2..11.6.

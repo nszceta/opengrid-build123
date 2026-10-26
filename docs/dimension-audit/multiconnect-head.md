@@ -1,7 +1,5 @@
 # Multiconnect head and screw: dimension audit
 
-Kata: opengrid-build123#588a (parent #enag).
-
 ## Scope
 
 - `build_multiconnect_head()` with `MulticonnectHeadConfig` and `ConnectorSlotConfig`:
@@ -84,23 +82,23 @@ Notation: z = 0 is the R10 face. In ours, the R7.5 face is the thread side and t
    - is 18.64 wide instead of 13 at the outer face;
    - severs the neck over the full height.
 
-   The head stays in one piece only through the thin R10 flange ring. It removes 171.9 mm³; SCAD removes 51.1 mm³. The helper is shared with the openConnect screw, which has the same defect (opengrid-build123#q9pm).
+   The head stays in one piece only through the thin R10 flange ring. It removes 171.9 mm³; SCAD removes 51.1 mm³. The helper is shared with the openConnect screw, which has the same defect (see `openconnect.md`).
 2. **Extra flat slot on the Multiconnect head (ours wrong).** SCAD `multiconnect_head` has only the coin cylinder. Ours also unions a 6.5 × 2.2 box. The box is not centred (y −2.2…0), so the slot band is 3.3 wide and asymmetric for z < 2.7.
 3. **Dimple is on the wrong face and is enclosed (ours wrong).** The SCAD/QW dimple opens on the R10 face: r = 1, depth 1, apex inward. The official `round.step` also puts it on the R10 face, as a truncated cone: r 1.05 at the face, r 0.05 at 1.0 deep. Ours is an inverted cone void under the R7.5 face, open only through a ~0.04 mm pinhole. It is useless as a detent. Whether the correct size is r 1.0 (SCAD) or r 1.05 truncated (official) is ambiguous. The difference is 0.05.
 4. **Head is upside down on the Multiconnect snap (ours wrong).** SCAD flips the head with `attach(TOP, TOP)`. Ours stacks it with the R10 flange on the snap and the R7.5 neck outermost. A Multiconnect slot (R10.15 capture behind an R7.65 opening) cannot retain it.
-   - Resolution (`kv84`, with `mvv3`): `_flip_snap_head` rotates the head 180° about Y. The default snap now has R7.5 on the snap (z 6.85 r 7.50) and R10 outermost (z 9.82–10.80 r 10.00). It is one solid with its top at 10.80. The outer face carries the dimple (r 1.045 at the face), not a coin slot.
-5. **EPS stacking makes the head 3.99 instead of 4.00 (at tolerance).** This also shifts the taper 0.01 down and makes the screw 10.79 instead of 10.8. The error equals the 0.01 tolerance, so I did not file it separately. The fix for xb1v or kv84 can drop the −EPS offsets. `total_height` already reports 4.0.
+   - Resolution: `_flip_snap_head` rotates the head 180° about Y. The default snap now has R7.5 on the snap (z 6.85 r 7.50) and R10 outermost (z 9.82–10.80 r 10.00). It is one solid with its top at 10.80. The outer face carries the dimple (r 1.045 at the face), not a coin slot.
+5. **EPS stacking makes the head 3.99 instead of 4.00 (at tolerance).** This also shifts the taper 0.01 down and makes the screw 10.79 instead of 10.8. The error equals the 0.01 tolerance, so I did not file it separately. The coin-slot or snap-head fix can drop the −EPS offsets. `total_height` already reports 4.0.
 6. **Fork vs docs.** The fork `RoundHead` matches SCAD/QW for every head dimension, and so does the official `round.step` (R10 to 1.0, 45° taper to R7.5 at 3.5, height 4.0). `RoundHeadCutter` clearances match QW `dimensionsToCoords` with offset 0.15, and match the official `round-negative.step` (R10.15 to 1.2121, R7.65 from 3.712, height 4.15). The fork's independent `top_radius` parameter differs from SCAD/QW, which derive the taper top as `R − taper_height`. Defaults agree, so the fork is not wrong here. It is a different parametrization. The fork has no screw, coin slot or dimple, so it cannot serve as a reference for those. The official round head does have a dimple.
 7. **PDF coverage gap (spec ambiguous / n/a).** Neither PDF dimensions the head, coin slot, dimple or screw length. For head shape and dimple, the references are the SCAD and the official STEP. For the coin slot and screw length, the only reference is the SCAD.
 
 ## Proposed fix issues
 
-- **opengrid-build123#xb1v.** Multiconnect head coin slot through-cuts head; adds flat slot absent from SCAD. Required geometry: slot only on the R10 face, depth 2.6 on axis, width 13 at the face, thickness 2.2 centred, no flat slot. Related: opengrid-build123#q9pm, the same shared helper on openConnect.
-- **opengrid-build123#smfm.** Multiconnect head dimple on wrong face and enclosed. Required geometry: cone opening on the R10 face, depth 1, apex inward. Size is r 1.0 per SCAD/QW, or r 1.05 truncated to r 0.05 per the official `round.step`.
-- **opengrid-build123#kv84.** Multiconnect snap mounts round head upside down. Required geometry: R7.5 face on the snap top, R10 face with the dimple outermost.
-- Not filed. Optional cleanup: remove the `−_EPSILON` stacking offsets in `build_multiconnect_head` / `build_multiconnect_screw` so the head is 4.00 and the screw 10.80. Fold this into xb1v or kv84.
+- Multiconnect head coin slot through-cuts head; adds flat slot absent from SCAD. Required geometry: slot only on the R10 face, depth 2.6 on axis, width 13 at the face, thickness 2.2 centred, no flat slot. The same shared helper affects openConnect.
+- Multiconnect head dimple on wrong face and enclosed. Required geometry: cone opening on the R10 face, depth 1, apex inward. Size is r 1.0 per SCAD/QW, or r 1.05 truncated to r 0.05 per the official `round.step`.
+- Multiconnect snap mounts round head upside down. Required geometry: R7.5 face on the snap top, R10 face with the dimple outermost.
+- Not filed. Optional cleanup: remove the `−_EPSILON` stacking offsets in `build_multiconnect_head` / `build_multiconnect_screw` so the head is 4.00 and the screw 10.80. Fold this into the coin-slot or snap-head fix.
 
 ## Resolution
 
-- `opengrid-build123#xb1v`: the Multiconnect head subtracts only the coin cylinder (`_coin_slot_tool`, thickness along Y) with its arc tangent at z=2.6 above the R10 face; no flat slot. Measured: removed 51.125 mm³ (SCAD rebuild 51.125); X-line z=0.005 material |x| ≥ 6.494; X-line z=2.65 continuous ±8.35 (neck intact); Y-line z=1.0 gap ±1.1. The −EPS stacking is removed: plain head bbox z 0…4.00, volume 1007.928 (= analytic).
-- `opengrid-build123#smfm`: dimple follows the official `round.step` (precedence over SCAD/QW): cone r1.05 at the R10 face to r0.05 at 1.0 deep. Measured: removed 1.212 mm³; X-line gap ±1.044 at z=0.005, ±0.549 at 0.5, ±0.059 at 0.99 (identical to the official probe).
+- The Multiconnect head subtracts only the coin cylinder (`_coin_slot_tool`, thickness along Y) with its arc tangent at z=2.6 above the R10 face; no flat slot. Measured: removed 51.125 mm³ (SCAD rebuild 51.125); X-line z=0.005 material |x| ≥ 6.494; X-line z=2.65 continuous ±8.35 (neck intact); Y-line z=1.0 gap ±1.1. The −EPS stacking is removed: plain head bbox z 0…4.00, volume 1007.928 (= analytic).
+- Dimple follows the official `round.step` (precedence over SCAD/QW): cone r1.05 at the R10 face to r0.05 at 1.0 deep. Measured: removed 1.212 mm³; X-line gap ±1.044 at z=0.005, ±0.549 at 0.5, ±0.059 at 0.99 (identical to the official probe).

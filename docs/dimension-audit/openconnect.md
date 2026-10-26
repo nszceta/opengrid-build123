@@ -1,7 +1,5 @@
 # openConnect head and screw — dimension audit
 
-Kata: `opengrid-build123#ykp1` (parent `#enag`).
-
 ## Scope
 
 - `build_openconnect_head()` with default `OpenConnectHeadConfig` → `output/openconnect_head.step`
@@ -114,22 +112,22 @@ Tolerance is 0.01 mm. EPS: ours 0.01 (`opengrid.py:68`), SCAD 0.005 (`opengrid_b
 
 ## Proposed fix issues
 
-- `opengrid-build123#r3zr`: replace the openConnect lock-relief boxes with the SCAD trapezoid notch (45° flanks, 1.2 tip / 2.4 mouth, r0.8 tip fillets, flared r0.8 mouth, Z 0…2.0), with left-side taper-in.
-- `opengrid-build123#q9pm`: rewrite the openConnect screw connector slot so that:
+- Replace the openConnect lock-relief boxes with the SCAD trapezoid notch (45° flanks, 1.2 tip / 2.4 mouth, r0.8 tip fillets, flared r0.8 mouth, Z 0…2.0), with left-side taper-in.
+- Rewrite the openConnect screw connector slot so that:
   - the cut is referenced from the outer face;
   - the slot runs along Y;
   - the circle is placed for a 13 mm chord and 2.6 mm depth;
   - it includes the front cuboid channel and the tapered flat-slot prismoid reaching z=5.0.
 
   The fix must be openConnect-specific, because `_subtract_connector_slot` is shared with the Multiconnect head. The issue also asks for a decision on coin thickness, 2.2 or 2.4.
-  Related: `opengrid-build123#xb1v` covers the Multiconnect side of the same `_subtract_connector_slot` bug and is linked to `q9pm`.
-- `opengrid-build123#ny0h`: add the head ∩ overhang-cone intersect, and implement `folded` (conditional fold at middle_to_bottom, gap 0.4×0.2).
+  The Multiconnect side of the same `_subtract_connector_slot` bug is in `multiconnect-head.md`.
+- Add the head ∩ overhang-cone intersect, and implement `folded` (conditional fold at middle_to_bottom, gap 0.4×0.2).
 - No issue filed for the 0.01 head-height EPS shortfall. It is at tolerance, and the screw is unaffected. Optional cleanup: extrude the top section by `top_height + EPS`.
 
 ## Resolution
 
 Verified against OpenSCAD renders of `openconnect_head` / `openconnect_screw` (`$fa=1`, `$fs=0.4`, coin thickness 2.2) by mesh boolean symmetric difference.
 
-- `opengrid-build123#r3zr`: lock reliefs are now the SCAD trapezoid notch (1.2 tip with r0.8 fillets, 2.4 mouth with flared r0.8 corners, mouth 0.005 outside the edge, z 0…2.0), left notch sheared inward 0.8 over the middle section. Measured: X-line y=1.7 material −7.905…7.905 at z=0.3, −7.505…7.8 at z=1.3, −7.277…7.4 at z=1.7; Y-line x=−8.45 z=0.3 notch gap 0.461…2.939. Head vs SCAD render: ours−ref 0.001 mm³, ref−ours 0.002 mm³. Head height is now exactly 2.60 (sections stacked without the −EPS shift), closing item 7.
-- `opengrid-build123#q9pm`: openConnect screw slot is openConnect-specific (`_openconnect_screw_slot_tool`): coin circle tangent at z=2.6, thickness 2.2 along X, front channel, tapered 1.8→1.2 flat prismoid z 1.9…5.0. Measured: Y-line x=0 z=0.005 material only y 6.494…8.9 (13 mm chord, open to the front edge); X-line y=3 gap ±1.1; at z=4.9 flat slot y ±3.25, x ±0.61. Coin thickness stays 2.2 (UI default, item 6 unchanged).
-- `opengrid-build123#ny0h`: unfolded head is intersected with the overhang cone (d 20.8→15.6, offset 0.32/0.45). `folded=True` ports `conditional_fold` (fold at middle_to_bottom+0.005, gap 0.4×0.2, slice-off 0.2; head keeps slots, skips the cone; text shifted +2 in y). Unfolded screw vs SCAD: ours−ref 0.58, ref−ours 1.68 mm³ (thread facets). Folded: one solid, bbox (−8.5, −7.205, 0)…(8.5, 9.4, 10.605) vs SCAD (−8.5, −7.2, 0)…(8.5, 9.4, 10.605); ours−ref 0.54, ref−ours 1.64 mm³. The hinge overlaps both pieces by ≥0.005 so the layout is a single solid (SCAD only touches the front piece).
+- Lock reliefs are now the SCAD trapezoid notch (1.2 tip with r0.8 fillets, 2.4 mouth with flared r0.8 corners, mouth 0.005 outside the edge, z 0…2.0), left notch sheared inward 0.8 over the middle section. Measured: X-line y=1.7 material −7.905…7.905 at z=0.3, −7.505…7.8 at z=1.3, −7.277…7.4 at z=1.7; Y-line x=−8.45 z=0.3 notch gap 0.461…2.939. Head vs SCAD render: ours−ref 0.001 mm³, ref−ours 0.002 mm³. Head height is now exactly 2.60 (sections stacked without the −EPS shift), closing item 7.
+- openConnect screw slot is openConnect-specific (`_openconnect_screw_slot_tool`): coin circle tangent at z=2.6, thickness 2.2 along X, front channel, tapered 1.8→1.2 flat prismoid z 1.9…5.0. Measured: Y-line x=0 z=0.005 material only y 6.494…8.9 (13 mm chord, open to the front edge); X-line y=3 gap ±1.1; at z=4.9 flat slot y ±3.25, x ±0.61. Coin thickness stays 2.2 (UI default, item 6 unchanged).
+- Unfolded head is intersected with the overhang cone (d 20.8→15.6, offset 0.32/0.45). `folded=True` ports `conditional_fold` (fold at middle_to_bottom+0.005, gap 0.4×0.2, slice-off 0.2; head keeps slots, skips the cone; text shifted +2 in y). Unfolded screw vs SCAD: ours−ref 0.58, ref−ours 1.68 mm³ (thread facets). Folded: one solid, bbox (−8.5, −7.205, 0)…(8.5, 9.4, 10.605) vs SCAD (−8.5, −7.2, 0)…(8.5, 9.4, 10.605); ours−ref 0.54, ref−ours 1.64 mm³. The hinge overlaps both pieces by ≥0.005 so the layout is a single solid (SCAD only touches the front piece).

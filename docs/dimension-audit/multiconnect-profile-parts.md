@@ -1,7 +1,5 @@
 # Multiconnect dovetail profile parts — dimension audit
 
-Kata: `opengrid-build123#710h` (parent `#enag`).
-
 ## Scope
 
 The audit covers these builders in `src/opengrid_build123/opengrid.py` and their STEP exports:
@@ -17,7 +15,7 @@ The audit covers these builders in `src/opengrid_build123/opengrid.py` and their
 
 Profiles checked: Standard, Jr., Mini. I also checked the Multipoint Beta profile points. Rounding modes checked: None, One Side, Both Sides.
 
-Out of scope: the Multiconnect round head and screw (`#588a`) and the multiConnect snap (`#kv84`).
+Out of scope: the Multiconnect round head and screw (see `multiconnect-head.md`) and the multiConnect snap (see `snap-body.md`).
 
 ## Sources
 
@@ -32,7 +30,7 @@ Out of scope: the Multiconnect round head and screw (`#588a`) and the multiConne
 
 ### QuackWorks `MultiConnectOpenSCAD` submodule removal
 
-QW commit `9eeaf78` (merged in `e0c1cb7`) deleted a gitlink `MultiConnectOpenSCAD`. Commit `6123129` lists it as `160000 commit ab23fbc…`, which is QuackWorks' own commit. No `.gitmodules` file ever existed, so the gitlink had no content. All three files used here are ordinary tracked blobs in `QuackWorks/Modules/` (`git ls-files -s` gives mode `100644`), and they are unchanged across `6123129..e0c1cb7`. Peer `#vxhr` confirmed the same result. **No reference in this audit came from the submodule.**
+QW commit `9eeaf78` (merged in `e0c1cb7`) deleted a gitlink `MultiConnectOpenSCAD`. Commit `6123129` lists it as `160000 commit ab23fbc…`, which is QuackWorks' own commit. No `.gitmodules` file ever existed, so the gitlink had no content. All three files used here are ordinary tracked blobs in `QuackWorks/Modules/` (`git ls-files -s` gives mode `100644`), and they are unchanged across `6123129..e0c1cb7`. The QuackWorks update review confirmed the same result. **No reference in this audit came from the submodule.**
 
 ## Method
 
@@ -98,14 +96,14 @@ The SCAD round ends use `$fn=25`, so SCAD Z-extents come out 0.02–0.06 mm shor
 
 ## Proposed fix issues
 
-- Filed `opengrid-build123#y4pk` — Double-sided Multiconnect connectors: mirror across the stem face (Y = profile depth), not the head face, so that the outer faces carry the wide head (discrepancy 1).
-- Filed `opengrid-build123#bc2f` — Multiconnect dimples: flip the cone so r = dimple_size·scale at the head face, tapering to 0 at depth dimple_size. Add the dimple to both rounded end caps to match `roundedEnd` (discrepancies 2, 3).
-- Filed `opengrid-build123#mzxc` — Multiconnect receiver/backer slot tool: start the dimple and on-ramp patterns at the closed (top-wall) end, as SCAD does. Keep passthrough consistent with that convention (discrepancy 4).
+- Double-sided Multiconnect connectors: mirror across the stem face (Y = profile depth), not the head face, so that the outer faces carry the wide head (discrepancy 1).
+- Multiconnect dimples: flip the cone so r = dimple_size·scale at the head face, tapering to 0 at depth dimple_size. Add the dimple to both rounded end caps to match `roundedEnd` (discrepancies 2, 3).
+- Multiconnect receiver/backer slot tool: start the dimple and on-ramp patterns at the closed (top-wall) end, as SCAD does. Keep passthrough consistent with that convention (discrepancy 4).
 - Not filed (cosmetic): trim the standalone delete tool's 0.02 EPS overshoot, or centre it, so the exported length equals `length` (discrepancy 5).
 - Decision needed, not filed: choose the on-ramp radius source, generator 11.65 or official 11.0 (discrepancy 6).
 
 ## Resolutions
 
-- Discrepancy 1 — resolved by `opengrid-build123#y4pk`. `_multiconnect_double_sided` now mirrors the part across the stem face (Y = profile depth). Measured result for the double-sided rail and round: X half-width 10.0 at Y=0.05 and Y=7.95, and 7.5 at Y=3.95 and Y=4.05. Both solids are valid.
-- Discrepancies 2 and 3 — resolved by `opengrid-build123#bc2f`. The dimple cone base now sits on the head face. Measured pocket chord at depth 0.05 / 0.3 / 0.6 / 0.95 is 1.9 / 1.4 / 0.8 / 0.1, so r = 1 at the face and 0 at 1 mm. A Both-Sides rail and the slot tool now also have a dimple at the far cap (Z=L). The same fix corrected the pitch direction: `_multiconnect_dimple_z_offsets` produced −140…28 for L=150, which put only two dimples on the rail. It now produces 0, 28, …, 140, which matches an OpenSCAD render of `rail(150)` with apexes at 0…140 from the top.
-- Discrepancy 4 — resolved by `opengrid-build123#mzxc`. Receivers and backers now place the slot tool turned 180° about Y, with its Z=0 end (= SCAD TOP) at the closed end. That end is at Z = L − w/2 − top wall for open-ended parts and at Z = L + EPS for passthrough parts. Measured open-ended bumps: L=50 at Z 9.35 and 37.35, L=150 at Z 25.35…137.35. Measured open-ended ramps at L=150: Z 53.35 plus a partial ramp at −2.65. Passthrough at L=150: bumps at Z 122.0 / 94.0 / … and ramps at 122.0 / 66.0 / 10.0. All of these match SCAD.
+- Discrepancy 1 — resolved. `_multiconnect_double_sided` now mirrors the part across the stem face (Y = profile depth). Measured result for the double-sided rail and round: X half-width 10.0 at Y=0.05 and Y=7.95, and 7.5 at Y=3.95 and Y=4.05. Both solids are valid.
+- Discrepancies 2 and 3 — resolved. The dimple cone base now sits on the head face. Measured pocket chord at depth 0.05 / 0.3 / 0.6 / 0.95 is 1.9 / 1.4 / 0.8 / 0.1, so r = 1 at the face and 0 at 1 mm. A Both-Sides rail and the slot tool now also have a dimple at the far cap (Z=L). The same fix corrected the pitch direction: `_multiconnect_dimple_z_offsets` produced −140…28 for L=150, which put only two dimples on the rail. It now produces 0, 28, …, 140, which matches an OpenSCAD render of `rail(150)` with apexes at 0…140 from the top.
+- Discrepancy 4 — resolved. Receivers and backers now place the slot tool turned 180° about Y, with its Z=0 end (= SCAD TOP) at the closed end. That end is at Z = L − w/2 − top wall for open-ended parts and at Z = L + EPS for passthrough parts. Measured open-ended bumps: L=50 at Z 9.35 and 37.35, L=150 at Z 25.35…137.35. Measured open-ended ramps at L=150: Z 53.35 plus a partial ramp at −2.65. Passthrough at L=150: bumps at Z 122.0 / 94.0 / … and ramps at 122.0 / 66.0 / 10.0. All of these match SCAD.
