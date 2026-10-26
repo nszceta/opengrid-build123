@@ -291,20 +291,14 @@ def _prepare_output_dir(path: Path) -> None:
 def _slot_delete_tool_config(config: dict[str, Any]) -> ConnectorSlotDeleteToolConfig:
     slot = _section(config, "connector_slot_delete_tool")
     return ConnectorSlotDeleteToolConfig(
-        radius=_as_float(slot, "radius"),
-        dimple_radius=_as_float(slot, "dimple_radius"),
-        separation=_as_float(slot, "separation"),
-        height=_as_float(slot, "height"),
-        flare_width=_as_float(slot, "flare_width"),
+        **{name: _as_float(slot, name) for name in ("depth", "radius", "fillet_radius", "neck_radius", "neck_offset", "flare_radius", "height")}
     )
 
 
 def _adjacent_connector_config(config: dict[str, Any]) -> AdjacentGridConnectorConfig:
     connector = _section(config, "adjacent_grid_connector")
-    return AdjacentGridConnectorConfig(
-        slot_delete_tool=_slot_delete_tool_config(config),
-        fit_clearance=_as_float(connector, "fit_clearance"),
-    )
+    names = ("lobe_radius", "lobe_offset", "relief_radius", "relief_offset", "fillet_radius", "thickness", "notch_depth", "notch_angle")
+    return AdjacentGridConnectorConfig(**{name: _as_float(connector, name) for name in names})
 
 
 def _multiconnect_config(config: dict[str, Any]) -> MulticonnectConfig:
@@ -1008,8 +1002,7 @@ def _slot_delete_tool_verification_variants(config: ConnectorSlotDeleteToolConfi
 def _adjacent_connector_verification_variants(config: AdjacentGridConnectorConfig) -> tuple[_VerificationVariant, ...]:
     return (
         ("configured", build_adjacent_grid_connector(config), _ADJACENT_CONNECTOR_VERIFICATION_VIEWS),
-        ("tight_fit", build_adjacent_grid_connector(replace(config, fit_clearance=0.0)), _ADJACENT_CONNECTOR_VERIFICATION_VIEWS),
-        ("loose_fit", build_adjacent_grid_connector(replace(config, fit_clearance=0.2)), _ADJACENT_CONNECTOR_VERIFICATION_VIEWS),
+        ("no_notch", build_adjacent_grid_connector(replace(config, notch_depth=0.0)), _ADJACENT_CONNECTOR_VERIFICATION_VIEWS),
     )
 
 
@@ -1315,7 +1308,7 @@ def main() -> None:
     verification_config = _verification_config(config)
 
     adjacent_connector_config = _adjacent_connector_config(config)
-    slot_delete_tool_config = adjacent_connector_config.slot_delete_tool
+    slot_delete_tool_config = _slot_delete_tool_config(config)
     board_config = _grid_config(config, slot_delete_tool_config)
     multiconnect_config = _multiconnect_config(config)
     snap_thread_config = _snap_thread_config(config)

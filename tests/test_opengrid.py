@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import fields as dataclass_fields, replace
+import functools
 import re
 from pathlib import Path
 import importlib.util
@@ -8,6 +9,7 @@ import yaml
 from typing import Any, cast
 
 import pytest
+import build123d as bd
 
 
 from opengrid_build123.opengrid import (
@@ -58,10 +60,6 @@ from opengrid_build123.opengrid import (
     _connector_positions,
     build_open_grid,
     _OG_SNAP_THREADS_PROFILE,
-    _scaled_snap_thread_profile,
-    _snap_thread_radial_offset,
-    _snap_thread_angles,
-    _snap_thread_cut_tool,
     _multiconnect_dimple_z_offsets,
     _multiconnect_on_ramp_z_offsets,
 )
@@ -101,13 +99,19 @@ def _snap_body_volume(config: SnapBodyConfig) -> float:
     return float(build_snap_body(config).volume)
 
 
+@functools.cache
+def _built_expanding_snap(config: ExpandingSnapConfig) -> Any:
+    # Expanding snaps take about a minute to build; share them across tests.
+    return build_expanding_snap(config)
+
+
 def _expanding_snap_bbox_size(config: ExpandingSnapConfig) -> tuple[float, float, float]:
-    size = build_expanding_snap(config).bounding_box().size
+    size = _built_expanding_snap(config).bounding_box().size
     return (float(size.X), float(size.Y), float(size.Z))
 
 
 def _expanding_snap_volume(config: ExpandingSnapConfig) -> float:
-    return float(build_expanding_snap(config).volume)
+    return float(_built_expanding_snap(config).volume)
 
 
 def _example_main() -> Any:
@@ -149,8 +153,9 @@ def _reference_multiconnect_specs(source: str, name: str) -> tuple[float, float,
 
 
 def _front_side_cut_probe(config: SnapBodyConfig) -> tuple[float, float, float]:
+    # Off-centre so the probe misses the uninstall notch (x within +-notch_width/2).
     return (
-        0.0,
+        (config.notch_width + config.width / 2.0 - config.cut_width_inset) / 2.0,
         -config.height / 2.0 + config.side_cut_depth / 2.0,
         config.thickness - config.side_cut_offset_to_top - config.side_cut_thickness / 2.0,
     )
@@ -241,7 +246,7 @@ def test_example_config_exhaustively_lists_config_dataclass_fields() -> None:
     }
     assert set(_mapping_section(config, "adjacent_grid_connector")) == {
         field.name for field in dataclass_fields(AdjacentGridConnectorConfig)
-    } - {"slot_delete_tool"}
+    }
     assert set(_mapping_section(config, "multiconnect")) == {
         field.name for field in dataclass_fields(MulticonnectConfig)
     }
@@ -311,7 +316,7 @@ def test_snap_thread_source_profile_and_effective_diameter_match_reference() -> 
     [
         (6.8, (16.5, 16.5)),
         (4.0, (16.5, 16.5)),
-        (3.4, (16.5, 16.2714285714)),
+        (3.4, (16.318, 16.5)),
     ],
 )
 def test_snap_thread_envelopes_match_source_heights(height: float, expected_xy: tuple[float, float]) -> None:
@@ -346,23 +351,30 @@ def test_snap_thread_pitch_changes_geometry_without_changing_nominal_envelope() 
     assert _snap_thread_volume(fine) != pytest.approx(_snap_thread_volume(coarse))
 
 
-def test_snap_thread_profile_has_no_cardinal_axis_spikes() -> None:
-    config = SnapThreadConfig()
-    profile = _scaled_snap_thread_profile(config.pitch)
-    z = config.height / 2.0
-    for angle in (0.0, 90.0, 180.0, 270.0):
-        before = _snap_thread_radial_offset(config, profile, angle - 0.1, z)
-        at_axis = _snap_thread_radial_offset(config, profile, angle, z)
-        after = _snap_thread_radial_offset(config, profile, angle + 0.1, z)
-        assert at_axis == pytest.approx((before + after) / 2.0, abs=0.01)
+def test_snap_threads_follow_source_phase_bevels_and_blunt_end() -> None:
+    # snap_threads (opengrid_threads_lib.scad:132-136): Blunt and Basic share one helix phase; the crest
+    # centre at actual angle a is at z = 3 * (a - 53.5) / 360 (mod 3). A vertical probe at r=7.9
+    # crosses a crest as crest +- 0.35 (0.25 flat + 0.1 down the 45 degree flank).
+    blunt = build_snap_threads(SnapThreadConfig(clearance=0.0))
+    basic = build_snap_threads(SnapThreadConfig(thread_type=ThreadType.BASIC, clearance=0.0))
 
+    def crests(shape: Any, angle: float) -> list[float]:
+        x, y = 7.9 * math.cos(math.radians(angle)), 7.9 * math.sin(math.radians(angle))
+        return _material_intervals(shape, (x, y, -1.0), (x, y, 8.0), 2)
 
-def test_snap_thread_faceting_uses_uniform_angles_without_cardinal_spikes() -> None:
-    angles = _snap_thread_angles(53.5)
-    deltas = [right - left for left, right in zip(angles, angles[1:])]
-
-    assert len(angles) == 144
-    assert deltas == pytest.approx([360.0 / 144.0] * 143)
+    # Blunt (blunt_threads, :77-111): no bevels, full profile down to z=0, and the helix ends at crest
+    # z=h-1.25 (5.55 at 0 degrees), so at 90 degrees the 6.30 crest is absent.
+    assert crests(blunt, 90.0) == pytest.approx([0.0, 0.654, 2.954, 3.654], abs=0.01)
+    # Basic (generic_threaded_rod bevel1=0.5 at z=0, bevel2=2.0 at z=h): the 0.5 cone trims the low
+    # crest to z>=0.4 and the 2.0 cone removes everything above z=4.9 at r=7.9.
+    assert crests(basic, 90.0) == pytest.approx([0.4, 0.654, 2.954, 3.654], abs=0.01)
+    assert crests(blunt, 0.0)[:2] == pytest.approx([2.204, 2.904], abs=0.01)
+    assert crests(basic, 0.0) == pytest.approx([2.204, 2.904], abs=0.01)
+    # The 2.0 bevel cone cuts through the core: screw tip core 12 mm (PDF positive tip chamfer 1x1).
+    assert _material_intervals(basic, (-9.0, 0.0, 6.75), (9.0, 0.0, 6.75), 0) == pytest.approx([-6.05, 6.05], abs=0.01)
+    # Without blunt_cutoff the helix start hangs below z=0: start crest -1.25 minus the 1.25 half width.
+    overhang = build_snap_threads(SnapThreadConfig(blunt_cutoff=False)).bounding_box()
+    assert (float(overhang.min.Z), float(overhang.max.Z)) == pytest.approx((-2.5, 6.8), abs=0.01)
 
 
 @pytest.mark.parametrize(
@@ -404,8 +416,9 @@ def test_snap_body_cut_rules_match_reference_source_behavior() -> None:
     with_notch = build_snap_body(SnapBodyConfig(enable_uninstall_notch=True))
     without_notch = build_snap_body(without_notch_config)
 
-    assert not with_notch.is_inside(_front_side_cut_probe(without_notch_config))
-    assert without_notch.is_inside(_front_side_cut_probe(without_notch_config))
+    # Source `base_snap` disables the front side cut while the notch is enabled.
+    assert with_notch.is_inside(_front_side_cut_probe(without_notch_config))
+    assert not without_notch.is_inside(_front_side_cut_probe(without_notch_config))
 
 
 def test_snap_body_directional_back_bottom_cut_matches_reference_source_behavior() -> None:
@@ -476,14 +489,30 @@ def test_snap_body_bottom_cut_offset_leaves_top_skin() -> None:
     assert _snap_body_volume(recessed_cut) > _snap_body_volume(flush_cut)
 
 
-def test_expanding_thread_cut_tool_uses_coarse_helical_thread_profile() -> None:
-    config = ExpandingSnapConfig()
-    tool = _snap_thread_cut_tool(config, config.snap_body.thickness)
-    root_volume = math.pi * (config.threads.effective_diameter / 2.0 - config.threads.pitch / 3.0) ** 2 * config.snap_body.thickness
+def _diagonal_point(radial: float, z: float, sy: float = 1.0) -> tuple[float, float, float]:
+    return (radial / math.sqrt(2.0), sy * radial / math.sqrt(2.0), z)
 
-    assert tool.children == ()
-    assert tool.bounding_box().size.X == pytest.approx(config.threads.effective_diameter, abs=0.2)
-    assert tool.volume > root_volume
+
+def test_snap_body_profile_matches_board_slot_and_source_cuts() -> None:
+    """Probe values from the official David D snap STEPs and opengrid_snap_lib."""
+    directional = build_snap_body(SnapBodyConfig())
+    lite = build_snap_body(SnapBodyConfig(thickness=3.4))
+
+    # Corner pads: full 15.23 reach only near the face, then a 45 deg slope (board chamfer).
+    assert directional.is_inside(_diagonal_point(15.0, 6.6))
+    assert not directional.is_inside(_diagonal_point(15.0, 5.6))
+    assert directional.is_inside(_diagonal_point(14.6, 0.3))
+    assert not directional.is_inside(_diagonal_point(14.6, 1.3))
+    # Directional lead-in: face at y=-11.612 and bottom cut -10.912..-10.312 at z=0.05.
+    assert not directional.is_inside((0.0, -11.7, 0.05))
+    assert directional.is_inside((0.0, -11.5, 0.05))
+    assert not directional.is_inside((0.0, -10.6, 0.05))
+    assert not directional.is_inside(_diagonal_point(13.6, 0.05, sy=-1.0))
+    # Uninstall notch gap is flush with the front face and trims the front nub.
+    assert not directional.is_inside((0.0, -12.2, 5.0))
+    assert not directional.is_inside((0.0, -12.5, 5.0))
+    # Lite directional back nub lower flank starts below the body (13.05 reach at z=0.25).
+    assert lite.is_inside((0.0, 13.0, 0.25))
 
 
 @pytest.mark.parametrize(
@@ -514,22 +543,55 @@ def test_expanding_snap_source_defaults_match_reference_constants() -> None:
     assert config.expand_split_angle == pytest.approx(_reference_number(expanding_source, "expand_split_angle"))
     assert config.spring_thickness == pytest.approx(_reference_number(snap_source, "spring_thickness"))
     assert config.spring_gap == pytest.approx(_reference_number(snap_source, "spring_gap"))
+
+
+def _flipped_expanding_probe(config: SnapBodyConfig, point: tuple[float, float, float]) -> tuple[float, float, float]:
+    # Source `expanding_snap` flips the base snap: up(t) yrot(180).
+    return (-point[0], point[1], config.thickness - point[2])
+
+
 def test_expanding_snap_omits_source_side_and_bottom_cuts() -> None:
-
-    snap_body = SnapBodyConfig(enable_uninstall_notch=False)
-    expanding = build_expanding_snap(ExpandingSnapConfig(snap_body=snap_body))
-
-    assert expanding.is_inside(_front_side_cut_probe(snap_body))
-    assert expanding.is_inside(_front_bottom_cut_probe(snap_body))
-
-
-
-def test_expanding_snap_preserves_body_envelope_and_removes_threaded_core() -> None:
     snap_body = SnapBodyConfig()
-    expanding = ExpandingSnapConfig(snap_body=snap_body)
+    expanding = _built_expanding_snap(ExpandingSnapConfig(snap_body=snap_body))
 
-    assert _expanding_snap_bbox_size(expanding) == pytest.approx(_snap_body_bbox_size(snap_body), abs=0.02)
-    assert _expanding_snap_volume(expanding) < _snap_body_volume(snap_body)
+    assert expanding.is_inside(_flipped_expanding_probe(snap_body, _front_side_cut_probe(snap_body)))
+    assert expanding.is_inside(_flipped_expanding_probe(snap_body, _front_bottom_cut_probe(snap_body)))
+
+
+def test_expanding_snap_is_flipped_and_preserves_body_envelope() -> None:
+    snap_body = SnapBodyConfig()
+    expanding = _built_expanding_snap(ExpandingSnapConfig(snap_body=snap_body))
+
+    assert _expanding_snap_bbox_size(ExpandingSnapConfig(snap_body=snap_body)) == pytest.approx(_snap_body_bbox_size(snap_body), abs=0.02)
+    assert expanding.volume < _snap_body_volume(snap_body)
+    # Basic nubs (z 3.4-5.4 on the body) sit at z 1.4-3.4 after the flip.
+    assert expanding.is_inside((12.6, 0.0, 2.4))
+    assert not expanding.is_inside((12.6, 0.0, 4.4))
+
+
+def test_expanding_snap_thread_relief_narrows_across_split_plane() -> None:
+    """Source `partition(spread=-d)`: the hole chord along 45 deg shrinks by d (15.50 -> 14.49)."""
+    config = ExpandingSnapConfig(threads=SnapThreadConfig(thread_type=ThreadType.BASIC))
+    expanding = _built_expanding_snap(config)
+
+    def hole_radius(angle_degrees: float, z: float) -> float:
+        direction = (math.cos(math.radians(angle_degrees)), math.sin(math.radians(angle_degrees)))
+        inside, outside = 5.0, 9.5  # void at 5.0, material at 9.5
+        for _ in range(24):
+            middle = (inside + outside) / 2.0
+            if expanding.is_inside((direction[0] * middle, direction[1] * middle, z)):
+                outside = middle
+            else:
+                inside = middle
+        return inside
+
+    def chord(angle_degrees: float, z: float) -> float:
+        return hole_radius(angle_degrees, z) + hole_radius(angle_degrees + 180.0, z)
+
+    # SCAD render chords: entry z 0.2 15.50 on both axes; end z 6.3 14.49 along 45, 14.77 along 0.
+    assert chord(45.0, 0.2) == pytest.approx(15.50, abs=0.03)
+    assert chord(45.0, 6.3) == pytest.approx(14.49, abs=0.03)
+    assert chord(0.0, 6.3) == pytest.approx(14.77, abs=0.03)
 
 
 def test_expanding_snap_distance_and_spring_gap_change_geometry() -> None:
@@ -537,7 +599,8 @@ def test_expanding_snap_distance_and_spring_gap_change_geometry() -> None:
     expanded = ExpandingSnapConfig(expand_distance_standard=1.0)
     wide_gap = ExpandingSnapConfig(spring_gap=0.8)
 
-    assert _expanding_snap_volume(expanded) < _expanding_snap_volume(collapsed)
+    # The expand distance narrows the thread negative, so less is removed.
+    assert _expanding_snap_volume(expanded) > _expanding_snap_volume(collapsed)
     assert _expanding_snap_volume(wide_gap) < _expanding_snap_volume(expanded)
 
 
@@ -611,27 +674,39 @@ def test_corner_chamfers_cut_through_full_tile_height() -> None:
         assert not chamfered.is_inside((-13.0, -13.0, z))
         assert chamfered.is_inside((-9.5, -13.0, z))
 
-def test_connector_slot_delete_tool_matches_reference_envelope() -> None:
+def _chord_width(shape: Any, x: float, z: float) -> float:
+    section = shape & bd.Edge.make_line((x, -50.0, z), (x, 50.0, z))
+    return sum(float(edge.length) for edge in section.edges())
+
+
+def test_connector_slot_delete_tool_matches_official_edge_connector_negative() -> None:
+    # Reference: David D's official 'openGrid Edge Connector Negative.step' (55.5616 mm3).
     tool = build_connector_slot_delete_tool()
     size = tool.bounding_box().size
 
     assert (float(size.X), float(size.Y), float(size.Z)) == pytest.approx((5.1, 5.2, 2.4))
-    assert tool.volume < 5.1 * 5.2 * 2.4
-    assert tool.is_inside((0.5, 0.0, 1.2))
-    assert not tool.is_inside((0.1, 2.55, 1.2))
+    assert tool.volume == pytest.approx(55.5616, abs=1e-3)
+    for depth, width in ((0.0, 5.134), (0.05, 4.834), (0.27, 4.637), (1.0, 4.980), (1.25, 5.174), (2.0, 5.2)):
+        assert _chord_width(tool, depth, 1.2) == pytest.approx(width, abs=0.002)
 
 
-def test_adjacent_grid_connector_is_double_sided_and_fits_slot_tool() -> None:
-    slot_config = ConnectorSlotDeleteToolConfig()
-    connector_config = AdjacentGridConnectorConfig(slot_delete_tool=slot_config, fit_clearance=0.1)
-    slot_size = build_connector_slot_delete_tool(slot_config).bounding_box().size
-    connector = build_adjacent_grid_connector(connector_config)
-    connector_size = connector.bounding_box().size
+def test_adjacent_grid_connector_matches_official_and_fits_board_pocket() -> None:
+    # Reference: official 'openGrid Edge Connector.step' (5.0 x 9.9227 x 2.2, 95.8668 mm3).
+    connector = build_adjacent_grid_connector()
+    box = connector.bounding_box()
 
-    assert connector_size.X == pytest.approx((float(slot_size.X) - 0.2) * 2.0)
-    assert connector_size.Y < slot_size.Y
-    assert connector_size.Z < slot_size.Z
-    assert connector.volume > build_connector_slot_delete_tool(slot_config).volume
+    assert (float(box.min.X), float(box.max.X)) == pytest.approx((-5.0, 4.9227), abs=1e-3)
+    assert (float(box.size.Y), float(box.size.Z)) == pytest.approx((5.0, 2.2))
+    assert connector.volume == pytest.approx(95.8668, abs=1e-3)
+    assert _chord_width(connector, 0.0, 1.1) == pytest.approx(4.5, abs=1e-3)
+
+    board = build_open_grid(
+        GridConfig(kind=BoardKind.FULL, board_width=2, board_height=2, connector_holes=True, screw_mounting=ScrewMounting.NONE)
+    )
+    for rotation in (0.0, 180.0):
+        seated = connector.rotate(bd.Axis.Z, rotation).translate((28.0, 0.0, 2.3))
+        overlap = board & seated
+        assert overlap is None or overlap.volume < 1e-6
 
 
 def test_connector_slot_delete_tool_cache_returns_distinct_public_shapes() -> None:
@@ -652,14 +727,9 @@ def test_connector_slot_delete_tool_cache_returns_distinct_public_shapes() -> No
     )
 
 
-def test_adjacent_grid_connector_fit_clearance_changes_envelope() -> None:
-    tight = build_adjacent_grid_connector(AdjacentGridConnectorConfig(fit_clearance=0.0))
-    loose = build_adjacent_grid_connector(AdjacentGridConnectorConfig(fit_clearance=0.2))
-
-    assert loose.bounding_box().size.X < tight.bounding_box().size.X
-    assert loose.bounding_box().size.Y < tight.bounding_box().size.Y
-    assert loose.bounding_box().size.Z < tight.bounding_box().size.Z
-    assert loose.volume < tight.volume
+def test_connector_slot_config_rejects_neck_without_room() -> None:
+    with pytest.raises(ValueError):
+        ConnectorSlotDeleteToolConfig(neck_offset=10.0).validate()
 
 
 @pytest.mark.parametrize(
@@ -898,6 +968,45 @@ def test_multiconnect_delete_tool_on_ramp_envelope_matches_reference_render() ->
     size = delete_tool.bounding_box().size
 
     assert (float(size.X), float(size.Y), float(size.Z)) == pytest.approx((23.3, 4.15, 70.3), abs=0.06)
+
+@pytest.mark.parametrize(
+    "part_kind",
+    (MulticonnectPartKind.CONNECTOR_DOUBLE_SIDED_ROUND, MulticonnectPartKind.CONNECTOR_DOUBLE_SIDED_RAIL),
+)
+def test_multiconnect_double_sided_parts_join_stem_to_stem(part_kind: MulticonnectPartKind) -> None:
+    part = build_multiconnect_part(MulticonnectConfig(part_kind=part_kind, length=28.0, dimples_enabled=False))
+
+    assert part.is_valid
+    # Wide r10 head on both outer faces (Y=0, Y=8), narrow r7.5 stem in the middle (Y=4).
+    assert part.is_inside((9.0, 0.2, 0.5))
+    assert part.is_inside((9.0, 7.8, 0.5))
+    assert not part.is_inside((9.0, 4.0, 0.5))
+    assert part.is_inside((7.0, 4.0, 0.5))
+
+
+def test_multiconnect_rail_dimples_taper_from_face_on_every_pitch_and_both_caps() -> None:
+    rail = build_multiconnect_rail(MulticonnectConfig(length=150.0, grid_size=28.0, rounding=MulticonnectRounding.BOTH_SIDES))
+
+    for z in (0.0, 28.0, 56.0, 84.0, 112.0, 140.0, 150.0):
+        # Source cone: r=1 at the head face, tapering to 0 at 1 mm depth.
+        assert not rail.is_inside((0.9, 0.05, z))
+        assert not rail.is_inside((0.35, 0.6, z))
+        assert rail.is_inside((0.45, 0.6, z))
+    assert rail.is_inside((0.0, 0.05, 14.0))
+
+
+def test_multiconnect_open_ended_receiver_detents_and_ramps_start_at_closed_end() -> None:
+    receiver = build_multiconnect_receiver(MulticonnectConfig(length=50.0, grid_size=28.0, on_ramps_enabled=False))
+    seat_z = 50.0 - 10.15 - 2.5
+
+    assert receiver.is_inside((0.0, 2.5, seat_z))
+    assert receiver.is_inside((0.0, 2.5, seat_z - 28.0))
+    assert not receiver.is_inside((0.0, 2.5, seat_z - 22.0))
+
+    ramped = build_multiconnect_receiver(MulticonnectConfig(length=150.0, grid_size=28.0, dimples_enabled=False))
+    ramp_z = 150.0 - 10.15 - 2.5 - 84.0
+    assert not ramped.is_inside((10.9, 5.9, ramp_z))
+    assert ramped.is_inside((10.9, 5.9, ramp_z + 18.0))
 
 def test_output_dir_rejects_blank_directory() -> None:
     example_main = _example_main()
@@ -1141,12 +1250,33 @@ def test_connector_slots_are_at_source_z_centers() -> None:
     centers = {
         BoardKind.FULL: _connector_z_base(6.8, BoardKind.FULL) + 2.4 / 2.0,
         BoardKind.LITE: _connector_z_base(4.0, BoardKind.LITE) + 2.4 / 2.0,
-        BoardKind.HEAVY: _connector_z_base(13.8, BoardKind.HEAVY) + 2.4 / 2.0,
     }
 
     assert centers[BoardKind.FULL] == pytest.approx(6.8 / 2.0)
     assert centers[BoardKind.LITE] == pytest.approx(4.0 - 2.4 / 2.0 - 1.0)
-    assert centers[BoardKind.HEAVY] == pytest.approx(13.8 / 2.0)
+
+
+def test_heavy_board_has_capture_lip_on_both_outer_faces() -> None:
+    # QuackWorks openGridHeavy: lip (offset 1.5) at z 0.4..1.4 and 12.4..13.4; middle and gap at 0.8.
+    board = build_open_grid(
+        GridConfig(kind=BoardKind.HEAVY, board_width=1, board_height=1, chamfers=ChamferMode.NONE, connector_holes=False, screw_mounting=ScrewMounting.NONE)
+    )
+    for z, offset in ((0.9, 1.5), (4.0, 0.8), (6.9, 0.8), (9.8, 0.8), (12.9, 1.5)):
+        assert board.is_inside((-14.0 + offset - 0.05, 5.0, z))
+        assert not board.is_inside((-14.0 + offset + 0.05, 5.0, z))
+
+
+def test_lite_adhesive_base_keeps_slot_height_and_has_screw_holes() -> None:
+    board = build_open_grid(
+        GridConfig(kind=BoardKind.LITE, board_width=3, board_height=3, add_adhesive_base=True, screw_mounting=ScrewMounting.CORNERS, connector_holes=True)
+    )
+    # Slot stays at z 0.6..3.0 (QuackWorks cuts it before adding the base).
+    assert not board.is_inside((-39.5, 14.0, 1.0))
+    assert board.is_inside((-39.5, 14.0, 0.4))
+    assert board.is_inside((-39.5, 14.0, 3.4))
+    # Screw head clearance (diameter 7.2) passes through the 0.6 base.
+    assert not board.is_inside((-14.0 + 3.4, -14.0, -0.3))
+    assert board.is_inside((-14.0 + 3.8, -14.0, -0.3))
 
 
 def test_connector_holes_remove_material_without_changing_board_envelope() -> None:
@@ -1176,7 +1306,8 @@ def test_connector_holes_remove_material_without_changing_board_envelope() -> No
     [
         (BoardKind.FULL, 3.4),
         (BoardKind.LITE, 1.8),
-        (BoardKind.HEAVY, 6.9),
+        (BoardKind.HEAVY, 3.4),
+        (BoardKind.HEAVY, 10.4),
     ],
 )
 def test_connector_cutouts_match_slot_delete_tool_depth(kind: BoardKind, z: float) -> None:
@@ -1275,6 +1406,90 @@ def test_stacked_interface_layers_follow_spacing_formula() -> None:
     assert _bbox_size(config)[2] == pytest.approx(expected_height)
 
 
+def test_board_is_one_fused_solid() -> None:
+    board = build_open_grid(
+        GridConfig(kind=BoardKind.FULL, board_width=3, board_height=5, chamfers=ChamferMode.EVERYWHERE, screw_mounting=ScrewMounting.EVERYWHERE)
+    )
+
+    assert len(board.solids()) == 1
+
+
+def test_row_and_column_screw_holes_sit_on_grid_nodes() -> None:
+    # QuackWorks/BOSL2: centred grid_copies plus parity shift -> 3x3, every 2 columns: holes at x=-14.
+    board = build_open_grid(
+        GridConfig(
+            kind=BoardKind.FULL,
+            board_width=3,
+            board_height=3,
+            chamfers=ChamferMode.NONE,
+            connector_holes=False,
+            screw_mounting=ScrewMounting.BY_ROW_AND_COLUMN,
+            screw_every_x_columns=2,
+        )
+    )
+
+    for y in (-14.0, 14.0):
+        assert not board.is_inside((-14.0 + 1.5, y, 3.4))
+        assert board.is_inside((-14.0 + 3.0, y, 3.4))
+        assert board.is_inside((-28.0, y, 3.4))
+
+
+def test_countersink_meets_counterbore_without_lip() -> None:
+    board = build_open_grid(
+        GridConfig(kind=BoardKind.FULL, board_width=3, board_height=3, chamfers=ChamferMode.NONE, connector_holes=False, screw_mounting=ScrewMounting.CORNERS)
+    )
+
+    # Counterbore (r 3.6) ends at z 5.81, cone (r 2.05 -> 3.6) spans z 4.27..5.81.
+    assert not board.is_inside((14.0 + 3.5, 14.0, 5.805))
+    assert not board.is_inside((14.0 + 2.1, 14.0, 4.4))
+    assert board.is_inside((14.0 + 2.1, 14.0, 4.1))
+
+
+def test_heavy_screw_heads_are_on_both_outer_faces() -> None:
+    board = build_open_grid(
+        GridConfig(kind=BoardKind.HEAVY, board_width=3, board_height=3, chamfers=ChamferMode.NONE, connector_holes=False, screw_mounting=ScrewMounting.CORNERS)
+    )
+
+    for z in (0.5, 13.3):
+        assert not board.is_inside((14.0 + 3.4, 14.0, z))
+    assert board.is_inside((14.0 + 3.4, 14.0, 6.9))
+
+
+def test_full_stack_flips_boards_and_interface_matches_board_face() -> None:
+    stack = build_open_grid(
+        GridConfig(
+            kind=BoardKind.FULL,
+            board_width=2,
+            board_height=3,
+            chamfers=ChamferMode.CORNERS,
+            connector_holes=False,
+            screw_mounting=ScrewMounting.CORNERS,
+            stack_count=2,
+        )
+    )
+
+    # QuackWorks zflip()s every Full board: counterbore faces the bed.
+    assert not stack.is_inside((0.0 + 3.4, 14.0, 0.5))
+    assert stack.is_inside((0.0 + 3.4, 14.0, 6.3))
+    # Interface (z 6.9..7.3) is the board face: 1.1 wall, 4.2 corner chamfer, 4.1 screw holes.
+    assert stack.is_inside((-28.0 + 1.0, 0.0, 7.1))
+    assert not stack.is_inside((-28.0 + 1.2, 0.0, 7.1))
+    assert not stack.is_inside((-28.0 + 0.5, -42.0 + 0.5, 7.1))
+    assert not stack.is_inside((0.0 + 1.5, 14.0, 7.1))
+
+
+def test_lite_stack_alternates_board_orientation() -> None:
+    stack = build_open_grid(
+        GridConfig(kind=BoardKind.LITE, board_width=1, board_height=1, chamfers=ChamferMode.NONE, connector_holes=False, screw_mounting=ScrewMounting.NONE, stack_count=2)
+    )
+
+    # Board 0: flat 0.8 back down, 1.1 face up; board 1 flipped so the 1.1 faces meet across the interface.
+    assert not stack.is_inside((-14.0 + 1.0, 0.0, 0.05))
+    for z in (3.95, 4.3, 4.65):
+        assert stack.is_inside((-14.0 + 1.0, 0.0, z))
+    assert not stack.is_inside((-14.0 + 1.0, 0.0, 8.55))
+
+
 def test_complete_tile_fill_places_remainder_tiles() -> None:
     config = GridConfig(
         kind=BoardKind.FULL,
@@ -1295,7 +1510,7 @@ def test_complete_tile_fill_places_remainder_tiles() -> None:
     assert size[2] == pytest.approx(6.8)
 
 
-def test_available_space_fill_uses_best_whole_grid_fit() -> None:
+def test_available_space_fill_clips_max_boards_to_space_in_mm() -> None:
     config = GridConfig(
         kind=BoardKind.FULL,
         fill_space_mode=FillSpaceMode.FILL_AVAILABLE_SPACE,
@@ -1311,7 +1526,8 @@ def test_available_space_fill_uses_best_whole_grid_fit() -> None:
 
     size = _bbox_size(config)
 
-    assert size == pytest.approx((89.0, 56.0, 6.8))
+    # QuackWorks FillSpaceClipOneSide: boards [0,56] and [61,75] (clip = space + full columns * spacing).
+    assert size == pytest.approx((75.0, 45.0, 6.8))
 
 
 def test_large_available_space_fill_stays_partitioned_and_bounded() -> None:
@@ -1334,15 +1550,92 @@ def test_large_available_space_fill_stays_partitioned_and_bounded() -> None:
     assert len(cast(Any, board).children) == 6
 
 
+def _material_intervals(shape: Any, start: tuple[float, float, float], end: tuple[float, float, float], axis: int) -> list[float]:
+    """Flattened [lo, hi, ...] material spans along a probe line, merging touching edges."""
+    section = shape & bd.Edge.make_line(start, end)
+    spans: list[list[float]] = []
+    for lo, hi in sorted(
+        tuple(sorted((float(tuple(edge.position_at(0.0))[axis]), float(tuple(edge.position_at(1.0))[axis]))))
+        for edge in section.edges()
+    ):
+        if spans and lo - spans[-1][1] < 1e-6:
+            spans[-1][1] = max(spans[-1][1], hi)
+        else:
+            spans.append([lo, hi])
+    return [value for span in spans for value in span]
+
+
 def test_openconnect_head_matches_source_envelope_and_lock_reliefs() -> None:
     plain = build_openconnect_head(OpenConnectHeadConfig(add_nubs=False))
     locked = build_openconnect_head(OpenConnectHeadConfig(add_nubs=True))
-    size = locked.bounding_box().size
+    bbox = locked.bounding_box()
 
-    assert (float(size.X), float(size.Y), float(size.Z)) == pytest.approx((17.0, 10.6, 2.6), abs=0.02)
+    assert (float(bbox.size.X), float(bbox.size.Y), float(bbox.size.Z)) == pytest.approx((17.0, 10.6, 2.6), abs=1e-6)
+    assert float(bbox.min.Z) == pytest.approx(0.0, abs=1e-6)
     assert locked.volume < plain.volume
     assert OpenConnectHeadConfig().small_rect_width == pytest.approx(14.2)
     assert OpenConnectHeadConfig().small_rect_height == pytest.approx(9.2)
+
+    # openconnect_lib.scad openconnect_lock: 0.6 deep trapezoid notch at y=1.7 (tip 7.905 from the
+    # axis, 0.005 SCAD EPS outboard), flared mouth, z 0..2.0; the left notch tapers in 0.8 over the
+    # middle chamfer while the right notch stays straight.
+    def notch_line(z: float) -> list[float]:
+        return _material_intervals(locked, (-20.0, 1.7, z), (20.0, 1.7, z), 0)
+
+    assert notch_line(0.3) == pytest.approx([-7.905, 7.905], abs=0.002)
+    assert notch_line(1.3) == pytest.approx([-7.505, 7.8], abs=0.002)
+    assert notch_line(1.7) == pytest.approx([-7.277, 7.4], abs=0.002)
+    mouth = _material_intervals(locked, (-8.45, -5.0, 0.3), (-8.45, 12.0, 0.3), 1)
+    assert mouth == pytest.approx([-1.7, 0.461, 2.939, 4.951], abs=0.002)
+
+
+def test_openconnect_screw_slots_follow_source_layout() -> None:
+    screw = build_openconnect_screw()
+
+    # Coin slot (openconnect_lib.scad:530-543): 13 mm chord on the outer face, open to the front
+    # edge, 2.2 thick along X; the head stays one piece.
+    assert len(screw.solids()) == 1
+    assert _material_intervals(screw, (0.0, -20.0, 0.005), (0.0, 20.0, 0.005), 1) == pytest.approx([6.494, 8.9], abs=0.002)
+    assert _material_intervals(screw, (-20.0, 3.0, 0.005), (20.0, 3.0, 0.005), 0) == pytest.approx(
+        [-8.471, -1.1, 1.1, 8.471], abs=0.002
+    )
+    # Flat-blade prismoid: 6.5 along Y, 1.8 -> 1.2 along X, reaching z=5.0 inside the threads.
+    flat_y = _material_intervals(screw, (0.0, -20.0, 4.9), (0.0, 20.0, 4.9), 1)
+    assert flat_y[1:3] == pytest.approx([-3.25, 3.25], abs=0.002)
+    flat_x = _material_intervals(screw, (-20.0, 2.5, 4.9), (20.0, 2.5, 4.9), 0)
+    assert flat_x[1:3] == pytest.approx([-0.61, 0.61], abs=0.002)
+
+
+def test_openconnect_folded_screw_matches_source_print_layout() -> None:
+    folded = build_openconnect_screw(OpenConnectScrewConfig(folded=True))
+    bbox = folded.bounding_box()
+
+    # conditional_fold layout (opengrid_base.scad:192-219): one printable part joined by the hinge.
+    assert len(folded.solids()) == 1
+    assert (float(bbox.min.X), float(bbox.min.Y), float(bbox.min.Z)) == pytest.approx((-8.5, -7.205, 0.0), abs=0.01)
+    assert (float(bbox.max.X), float(bbox.max.Y), float(bbox.max.Z)) == pytest.approx((8.5, 9.4, 10.605), abs=0.01)
+
+
+def test_multiconnect_head_coin_slot_and_dimple_open_on_outer_face() -> None:
+    plain = build_multiconnect_head(MulticonnectHeadConfig(top_pattern="none"))
+    coin = build_multiconnect_head(MulticonnectHeadConfig(top_pattern="coin_slot"))
+    dimple = build_multiconnect_head(MulticonnectHeadConfig(top_pattern="dimple"))
+
+    assert float(plain.bounding_box().size.Z) == pytest.approx(4.0, abs=1e-6)
+    # opengrid_parametric_snap.scad:377: 13 mm chord on the R10 face, 2.6 deep on axis, 2.2 thick.
+    assert plain.volume - coin.volume == pytest.approx(51.125, abs=0.01)
+    assert _material_intervals(coin, (-20.0, 0.0, 0.005), (20.0, 0.0, 0.005), 0) == pytest.approx(
+        [-10.0, -6.494, 6.494, 10.0], abs=0.002
+    )
+    assert _material_intervals(coin, (-20.0, 0.0, 2.65), (20.0, 0.0, 2.65), 0) == pytest.approx([-8.35, 8.35], abs=0.002)
+    assert _material_intervals(coin, (0.0, -20.0, 1.0), (0.0, 20.0, 1.0), 1) == pytest.approx(
+        [-10.0, -1.1, 1.1, 10.0], abs=0.002
+    )
+    # Official round.step dimple: r1.05 at the R10 face, r0.05 at 1.0 deep.
+    assert plain.volume - dimple.volume == pytest.approx(1.212, abs=0.002)
+    assert _material_intervals(dimple, (-20.0, 0.0, 0.5), (20.0, 0.0, 0.5), 0) == pytest.approx(
+        [-10.0, -0.55, 0.55, 10.0], abs=0.002
+    )
 
 
 def test_snap_thread_backed_screws_add_heads_and_remove_slots() -> None:
@@ -1363,12 +1656,58 @@ def test_opengrid_snap_product_variants_compose_expected_attachments() -> None:
     openconnect = build_opengrid_snap(OpenGridSnapConfig(kind=OpenGridSnapKind.OPENCONNECT))
     multiconnect = build_opengrid_snap(OpenGridSnapConfig(kind=OpenGridSnapKind.MULTICONNECT))
 
-    assert threaded.bounding_box().size.Z > bare.bounding_box().size.Z
+    assert threaded.bounding_box().size.Z == pytest.approx(bare.bounding_box().size.Z, abs=1e-6)
     assert openconnect.bounding_box().size.Z > bare.bounding_box().size.Z
     assert multiconnect.bounding_box().size.Z > bare.bounding_box().size.Z
-    assert threaded.volume > bare.volume
+    assert threaded.volume < bare.volume
     assert openconnect.volume > bare.volume
     assert multiconnect.volume > bare.volume
+
+
+def test_basic_threads_snap_cuts_a_hole_that_seats_the_screw_thread() -> None:
+    # opengrid_parametric_snap.scad:418-421 cuts snap_threads (clearance 0.5) through the body, turned
+    # 180 degrees about Y with its thread frame at the snap top. The screw thread (clearance 0) seated as
+    # in :448-455 (up(h + head) yrot(180)) must mesh without interference.
+    snap = build_opengrid_snap(OpenGridSnapConfig(kind=OpenGridSnapKind.BASIC_THREADS))
+    thickness = OpenGridSnapConfig().snap_body.thickness
+    screw = build_snap_threads(SnapThreadConfig(height=thickness, clearance=0.0))
+
+    assert not snap.is_inside((0.0, 0.0, thickness / 2.0))
+    seated = snap & screw.rotate(bd.Axis.Y, 180.0).translate((0.0, 0.0, thickness))
+    assert seated is None or seated.volume < 1e-3
+    unflipped = snap & screw
+    assert unflipped is not None and unflipped.volume > 1.0
+
+
+
+@pytest.mark.parametrize(
+    ("kind", "small_half_width", "large_half_width", "head_height"),
+    ((OpenGridSnapKind.OPENCONNECT, 7.10, 8.50, 2.6), (OpenGridSnapKind.MULTICONNECT, 7.5, 10.0, 4.0)),
+)
+def test_opengrid_snap_heads_mount_small_face_on_snap(
+    kind: OpenGridSnapKind, small_half_width: float, large_half_width: float, head_height: float
+) -> None:
+    # Source attach(TOP, TOP): the slot-retained large face must be outermost, not against the snap.
+    thickness = SnapBodyConfig().thickness
+    snap = build_opengrid_snap(OpenGridSnapConfig(kind=kind))
+
+    def half_width_at(z: float) -> float:
+        slab = cast(Any, snap & bd.Box(60.0, 60.0, 0.02).translate((0.0, 0.0, z)))
+        return float(slab.bounding_box().max.X)
+
+    assert len(snap.solids()) == 1
+    assert float(snap.bounding_box().max.Z) == pytest.approx(thickness + head_height, abs=1e-3)
+    assert half_width_at(thickness + 0.05) == pytest.approx(small_half_width, abs=0.01)
+    assert half_width_at(thickness + head_height - 0.05) == pytest.approx(large_half_width, abs=0.01)
+
+
+def test_multiconnect_snap_outer_face_has_dimple_not_coin_slot() -> None:
+    # Source snap uses multiconnect_head(top_pattern="dimple"); a 13 x 2.4 coin slot would remove ~30 mm^2 here.
+    snap = build_opengrid_snap(OpenGridSnapConfig(kind=OpenGridSnapKind.MULTICONNECT))
+    top = float(snap.bounding_box().max.Z)
+    area = cast(Any, snap & bd.Box(30.0, 30.0, 0.002).translate((0.0, 0.0, top - 0.005))).volume / 0.002
+
+    assert math.pi * (10.0**2 - 1.1**2) < area < math.pi * (10.0**2 - 0.9**2)
 
 
 def test_text_engraving_removes_material_from_product_builders() -> None:

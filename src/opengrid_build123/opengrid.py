@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterable, Sequence, TypeAlias, cast
+from typing import Iterable, Iterator, Sequence, TypeAlias, cast
 
 import build123d as bd
 
@@ -81,10 +81,13 @@ _TOP_CAPTURE_INITIAL_INSET = 2.4
 _TILE_INNER_SIZE_DIFFERENCE = 3.0
 _INTERSECTION_DISTANCE = 4.2
 _CORNER_SQUARE_THICKNESS = 2.6
+_CONNECTOR_CUTOUT_DEPTH = 5.1
 _CONNECTOR_CUTOUT_RADIUS = 2.6
-_CONNECTOR_CUTOUT_DIMPLE_RADIUS = 2.7
-_CONNECTOR_CUTOUT_SEPARATION = 2.5
-_CONNECTOR_CUTOUT_FLARE_WIDTH = 1.0
+_CONNECTOR_CUTOUT_FILLET_RADIUS = 0.5
+_CONNECTOR_CUTOUT_NECK_RADIUS = 5.0 * math.sqrt(5.0) / 4.0
+_CONNECTOR_CUTOUT_NECK_OFFSET = 5.1
+_CONNECTOR_CUTOUT_FLARE_RADIUS = 0.25
+_CONNECTOR_MOUTH_OVERHANG = 0.1
 _LITE_CONNECTOR_CUTOUT_DISTANCE_FROM_TOP = 1.0
 _CONNECTOR_CUTOUT_HEIGHT = 2.4
 _MULTICONNECT_STANDARD_RADIUS = 10.0
@@ -105,9 +108,15 @@ _OG_SNAP_THREADS_PROFILE: tuple[Point2D, ...] = (
     (1.25 / 3.0, -1.0 / 3.0),
 )
 _SNAP_THREAD_BASE_SEGMENTS = 144
-_SNAP_THREAD_Z_SEGMENTS_PER_PITCH = 24
-_SNAP_THREAD_CUT_BASE_SEGMENTS = 18
-_SNAP_THREAD_CUT_Z_SEGMENTS_PER_PITCH = 3
+_SNAP_THREAD_TAPER_SAMPLES = 16
+# Source `blunt_threads` lifts the helix by `up(0.25)`, independent of pitch.
+_SNAP_THREAD_HELIX_LIFT = 0.25
+# Ridge sections dip this far inside the core; larger than the 144-segment chord sag of the core.
+_SNAP_THREAD_ROOT_OVERLAP = 0.005
+# Keeps blunt ridge end vertices off the core edges at z=0 and z=height so booleans stay generic.
+_SNAP_THREAD_END_GAP = 0.002
+# Ridge extension beyond the clipping faces where the helix end is cut off anyway.
+_SNAP_THREAD_CLIP_MARGIN = 0.05
 _SNAP_THREAD_LEAD_IN_OFFSET = 1.5
 _SNAP_THREAD_MIN_TURNS = 0.5
 _SNAP_THREAD_BLUNT_ANGLE = 10.0
@@ -117,6 +126,18 @@ _OG_SNAP_CORNER_CHAMFER = _OG_SNAP_CORNER_OUTER_DIAGONAL * math.sqrt(2.0)
 _OG_SNAP_CORNER_INNER_DIAGONAL = _OG_SNAP_WIDTH * math.sqrt(2.0) / 2.0 - _OG_SNAP_CORNER_OUTER_DIAGONAL
 
 _SCREW_CUSTOM_DEFAULT = "011110"
+# opengrid_base.scad EPS. openConnect lock-relief mouths and the screw fold plane sit this far
+# outside the nominal head edge / middle_to_bottom, like the SCAD source.
+_SCAD_EPSILON = 0.005
+_OPENCONNECT_SCREW_OVERHANG_DIAMETER = 15.6
+_OPENCONNECT_SCREW_OVERHANG_OFFSET: Point2D = (0.32, 0.45)
+_OPENCONNECT_FOLD_GAP_WIDTH = 0.4
+_OPENCONNECT_FOLD_GAP_HEIGHT = 0.2
+_OPENCONNECT_FOLDED_TEXT_SHIFT = 2.0
+# Official David D round.step dimple: r1.05 at the R10 face, r0.05 at 1.0 deep.
+_MULTICONNECT_HEAD_DIMPLE_RADIUS = 1.05
+_MULTICONNECT_HEAD_DIMPLE_TIP_RADIUS = 0.05
+_MULTICONNECT_HEAD_DIMPLE_DEPTH = 1.0
 
 
 class BoardKind(StrEnum):
@@ -198,52 +219,85 @@ class MulticonnectRounding(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ConnectorSlotDeleteToolConfig:
-    """Configuration for the adjacent-grid connector side slot delete tool."""
+    """Adjacent-grid connector pocket, per David D's official 'openGrid Edge Connector Negative'.
 
+    The pocket is `depth` deep from the board edge, ends in a `radius` round,
+    narrows through a neck formed by two `neck_radius` arcs centred on the board
+    edge at +-`neck_offset`, with `fillet_radius` shoulder rounds and
+    `flare_radius` mouth rounds.
+    """
+
+    depth: float = _CONNECTOR_CUTOUT_DEPTH
     radius: float = _CONNECTOR_CUTOUT_RADIUS
-    dimple_radius: float = _CONNECTOR_CUTOUT_DIMPLE_RADIUS
-    separation: float = _CONNECTOR_CUTOUT_SEPARATION
+    fillet_radius: float = _CONNECTOR_CUTOUT_FILLET_RADIUS
+    neck_radius: float = _CONNECTOR_CUTOUT_NECK_RADIUS
+    neck_offset: float = _CONNECTOR_CUTOUT_NECK_OFFSET
+    flare_radius: float = _CONNECTOR_CUTOUT_FLARE_RADIUS
     height: float = _CONNECTOR_CUTOUT_HEIGHT
-    flare_width: float = _CONNECTOR_CUTOUT_FLARE_WIDTH
 
     def validate(self) -> None:
-        if min(
-            self.radius,
-            self.dimple_radius,
-            self.separation,
-            self.height,
-            self.flare_width,
-        ) <= 0.0:
+        if min(self.depth, self.radius, self.fillet_radius, self.neck_radius, self.neck_offset, self.flare_radius, self.height) <= 0.0:
             raise ValueError("connector slot delete tool dimensions must be positive")
-        if self.separation * 3.0 <= self.dimple_radius:
-            raise ValueError("connector slot delete tool separation is too small for the insertion flare")
+        if not self.radius < self.depth:
+            raise ValueError("connector slot delete tool radius must be smaller than its depth")
+        if not self.fillet_radius < self.radius < self.neck_offset:
+            raise ValueError("connector slot delete tool needs fillet_radius < radius < neck_offset")
+        if not self.flare_radius < self.neck_radius:
+            raise ValueError("connector slot delete tool flare_radius must be smaller than neck_radius")
+        if self.depth - self.radius <= 0.0:
+            raise ValueError("connector slot delete tool depth is too small")
+        fillet_gap = self.neck_offset - (self.radius - self.fillet_radius)
+        if not 0.0 < fillet_gap < self.neck_radius + self.fillet_radius:
+            raise ValueError("connector slot delete tool neck arcs do not reach the shoulder fillets")
+        fillet_center = math.sqrt((self.neck_radius + self.fillet_radius) ** 2 - fillet_gap**2)
+        if fillet_center >= self.depth - self.radius:
+            raise ValueError("connector slot delete tool neck arcs leave no straight pocket side")
+        if self.flare_radius * 2.0 >= self.neck_radius:
+            raise ValueError("connector slot delete tool flare_radius is too large for the neck")
 
 
 @dataclass(frozen=True, slots=True)
 class AdjacentGridConnectorConfig:
-    """Configuration for the positive connector joining adjacent openGrid boards."""
+    """Positive adjacent-grid connector, per David D's official 'openGrid Edge Connector'.
 
-    slot_delete_tool: ConnectorSlotDeleteToolConfig = field(default_factory=ConnectorSlotDeleteToolConfig)
-    fit_clearance: float = 0.1
+    Two `lobe_radius` lobes centred `lobe_offset` either side of the seam on
+    straight `lobe_radius` sides, waisted by `relief_radius` arcs centred on the
+    seam at +-`relief_offset` with `fillet_radius` rounds. One lobe tip carries a
+    `notch_depth` V notch of `notch_angle` included angle (0 depth disables it).
+    """
+
+    lobe_radius: float = 2.5
+    lobe_offset: float = 2.5
+    relief_radius: float = 3.25
+    relief_offset: float = 5.5
+    fillet_radius: float = 0.5
+    thickness: float = 2.2
+    notch_depth: float = 0.6
+    notch_angle: float = 45.0
 
     def validate(self) -> None:
-        self.slot_delete_tool.validate()
-        min_dimension = min(
-            self.slot_delete_tool.radius,
-            self.slot_delete_tool.height / 2.0,
-            self.slot_delete_tool.flare_width / 2.0,
-        )
-        if self.fit_clearance < 0.0:
-            raise ValueError("adjacent-grid connector fit_clearance must be non-negative")
-        if self.fit_clearance >= min_dimension:
-            raise ValueError("adjacent-grid connector fit_clearance is too large")
+        if min(self.lobe_radius, self.lobe_offset, self.relief_radius, self.relief_offset, self.fillet_radius, self.thickness) <= 0.0:
+            raise ValueError("adjacent-grid connector dimensions must be positive")
+        if not self.relief_offset - self.relief_radius < self.lobe_radius:
+            raise ValueError("adjacent-grid connector relief arcs must cut into the connector sides")
+        if self.relief_offset - self.relief_radius <= 0.0:
+            raise ValueError("adjacent-grid connector relief arcs must leave a neck at the seam")
+        if not 0.0 <= self.notch_depth < self.lobe_radius:
+            raise ValueError("adjacent-grid connector notch_depth must be in [0, lobe_radius)")
+        if not 0.0 < self.notch_angle < 180.0:
+            raise ValueError("adjacent-grid connector notch_angle must be in (0, 180)")
+
 
 @dataclass(frozen=True, slots=True)
 class SnapThreadConfig:
-    """Configuration for the openGrid snap thread primitive.
+    """Configuration for the openGrid snap thread primitive (source `snap_threads`).
 
     Returned thread solids are centered on X/Y with their Z range anchored at
     ``[0, height]`` so snap bodies and screw variants can compose them directly.
+    Bevels apply to Basic threads only: ``top_bevel`` at z=0 and the
+    height-selected bottom bevel at z=height. Blunt threads have no bevels; their
+    helix ends inside the part below z=height, and ``blunt_cutoff`` removes the
+    helix start that hangs below z=0.
     """
 
     thread_type: ThreadType = ThreadType.BLUNT
@@ -623,7 +677,7 @@ class OpenGridSnapConfig:
     threads: SnapThreadConfig = field(default_factory=SnapThreadConfig)
     expanding_snap: ExpandingSnapConfig = field(default_factory=ExpandingSnapConfig)
     openconnect_head: OpenConnectHeadConfig = field(default_factory=OpenConnectHeadConfig)
-    multiconnect_head: MulticonnectHeadConfig = field(default_factory=MulticonnectHeadConfig)
+    multiconnect_head: MulticonnectHeadConfig = field(default_factory=lambda: MulticonnectHeadConfig(top_pattern="dimple"))
     text: TextEngravingConfig = field(default_factory=TextEngravingConfig)
     center_offset: Point2D = (0.0, 0.0)
     reverse_threads_entryside: bool = False
@@ -848,41 +902,56 @@ def build_fill_space(config: GridConfig) -> Shape:
 def build_connector_slot_delete_tool(
     config: ConnectorSlotDeleteToolConfig = ConnectorSlotDeleteToolConfig(),
 ) -> Shape:
-    """Build the adjacent-grid connector side slot delete tool.
+    """Build the adjacent-grid connector pocket (side slot delete tool).
 
     The returned tool has its origin on the board edge, extends inward along
-    +X, is centered on Y, and starts at Z=0. Geometry is translated from
-    QuackWorks `openGrid/openGrid.scad` `connector_cutout_delete_tool`,
-    licensed CC BY-NC-SA 4.0.
+    +X, is centered on Y, and starts at Z=0. With default settings it matches
+    David D's official 'openGrid Edge Connector Negative.step' (and the pocket
+    in the official openGrid board STEPs) exactly.
     """
     config.validate()
     return _copy_shape(_connector_slot_delete_tool_base(config))
 
 
 @lru_cache(maxsize=128)
-def _connector_slot_delete_tool_base(config: ConnectorSlotDeleteToolConfig) -> Shape:
+def _connector_slot_delete_tool_base(config: ConnectorSlotDeleteToolConfig, overhang: float = 0.0) -> Shape:
+    """Pocket solid; `overhang` extends the mouth outward past the board edge for clean boolean cuts."""
     config.validate()
-    flare_height = config.separation * 2.0 - (config.dimple_radius - config.separation)
+    # Sketch frame: X lateral, Y depth from the board edge (Y=0); rotated to +X inward at the end.
+    main_y = config.depth - config.radius
+    fillet_x = config.radius - config.fillet_radius
+    fillet_y = math.sqrt((config.neck_radius + config.fillet_radius) ** 2 - (config.neck_offset - fillet_x) ** 2)
+    flare_x = config.neck_offset - math.sqrt((config.neck_radius - config.flare_radius) ** 2 - config.flare_radius**2)
+    flare_y = config.flare_radius
+    neck_center = (config.neck_offset, 0.0)
+    fillet_to_neck = _point_toward(neck_center, config.neck_radius, (fillet_x, fillet_y))
+    neck_to_flare = _point_toward(neck_center, config.neck_radius, (flare_x, flare_y))
+    neck_start = _angle_degrees(neck_center, fillet_to_neck)
+    flare_start = _angle_degrees((flare_x, flare_y), neck_to_flare)
     with bd.BuildSketch() as profile:
-        with bd.Locations((-config.radius - 0.1, 0.0), (config.radius - 0.1, 0.0)):
-            bd.Circle(config.radius)
-        bd.make_hull()
-        dimple_x = -0.1 + config.radius - config.separation
-        dimple_y = config.radius + config.separation
-        with bd.Locations((dimple_x, -dimple_y), (dimple_x, dimple_y)):
-            bd.Circle(config.dimple_radius, mode=bd.Mode.SUBTRACT)
-        bd.Rectangle(
-            config.flare_width,
-            flare_height,
-            align=(bd.Align.MIN, bd.Align.CENTER),
-        )
-        bd.Rectangle(
-            config.dimple_radius * 4.0,
-            config.dimple_radius * 4.0,
-            align=(bd.Align.MIN, bd.Align.CENTER),
-            mode=bd.Mode.INTERSECT,
-        )
-    return cast(Shape, bd.extrude(profile.sketch, amount=config.height))
+        with bd.BuildLine():
+            bd.CenterArc((0.0, main_y), config.radius, start_angle=90.0, arc_size=-90.0)
+            bd.Line((config.radius, main_y), (config.radius, fillet_y))
+            bd.TangentArc((config.radius, fillet_y), fillet_to_neck, tangent=(0.0, -1.0))
+            bd.CenterArc(neck_center, config.neck_radius, neck_start, _angle_degrees(neck_center, neck_to_flare) - neck_start)
+            bd.CenterArc((flare_x, flare_y), config.flare_radius, flare_start, 270.0 - flare_start)
+            bd.Line((flare_x, 0.0), (0.0, 0.0))
+            bd.mirror(about=bd.Plane.YZ)
+        bd.make_face()
+        if overhang > 0.0:
+            bd.Rectangle(2.0 * flare_x, overhang, align=(bd.Align.CENTER, bd.Align.MAX))
+    pocket = cast(Shape, bd.extrude(profile.sketch, amount=config.height))
+    return pocket.rotate(bd.Axis.Z, -90.0)
+
+
+def _point_toward(center: Point2D, radius: float, target: Point2D) -> Point2D:
+    dx, dy = target[0] - center[0], target[1] - center[1]
+    scale = radius / math.hypot(dx, dy)
+    return (center[0] + dx * scale, center[1] + dy * scale)
+
+
+def _angle_degrees(center: Point2D, point: Point2D) -> float:
+    return math.degrees(math.atan2(point[1] - center[1], point[0] - center[0]))
 
 
 def _copy_shape(shape: Shape) -> Shape:
@@ -892,21 +961,34 @@ def _copy_shape(shape: Shape) -> Shape:
 def build_adjacent_grid_connector(
     config: AdjacentGridConnectorConfig = AdjacentGridConnectorConfig(),
 ) -> Shape:
-    """Build the positive adjacent-grid connector that mates with side slots.
+    """Build the positive adjacent-grid connector that mates with the edge pockets.
 
-    The connector is two opposed slot-mating halves sharing the board seam at
-    X=0. Each half is derived from the adjacent-grid connector slot delete
-    tool and inset by `fit_clearance`, so it fits into slots made with the
-    same `ConnectorSlotDeleteToolConfig`.
+    Matches David D's official 'openGrid Edge Connector.step'. The seam is at
+    X=0, the long axis is X, Z runs from 0 to `thickness`, and the optional
+    orientation notch is in the +X lobe tip.
     """
     config.validate()
-    half = build_connector_slot_delete_tool(config.slot_delete_tool)
-    if config.fit_clearance > 0.0:
-        half = cast(Shape, bd.offset(half, amount=-config.fit_clearance))
-    half_box = half.bounding_box()
-    half = half.translate((-float(half_box.min.X), 0.0, -float(half_box.min.Z)))
-    other_half = half.rotate(bd.Axis.Z, 180.0)
-    return cast(Shape, half + other_half)
+    lobe_x = config.lobe_offset
+    radius = config.lobe_radius
+    tol = 1e-6
+    with bd.BuildSketch() as profile:
+        bd.Rectangle(2.0 * lobe_x, 2.0 * radius)
+        with bd.Locations((-lobe_x, 0.0), (lobe_x, 0.0)):
+            bd.Circle(radius)
+        with bd.Locations((0.0, -config.relief_offset), (0.0, config.relief_offset)):
+            bd.Circle(config.relief_radius, mode=bd.Mode.SUBTRACT)
+        bd.fillet(profile.vertices().filter_by(lambda v: abs(v.X) < lobe_x - tol), config.fillet_radius)
+        if config.notch_depth > 0.0:
+            apex_x = lobe_x + radius - config.notch_depth
+            half_angle = math.radians(config.notch_angle / 2.0)
+            reach = 2.0 * radius
+            dx, dy = reach * math.cos(half_angle), reach * math.sin(half_angle)
+            bd.Polygon((apex_x, 0.0), (apex_x + dx, dy), (apex_x + dx, -dy), align=None, mode=bd.Mode.SUBTRACT)
+            bd.fillet(
+                profile.vertices().filter_by(lambda v: v.X > lobe_x + tol and abs(v.Y) > tol),
+                config.fillet_radius,
+            )
+    return cast(Shape, bd.extrude(profile.sketch, amount=config.thickness))
 
 
 def build_snap_body(config: SnapBodyConfig = SnapBodyConfig()) -> Shape:
@@ -933,17 +1015,29 @@ def build_snap_body(config: SnapBodyConfig = SnapBodyConfig()) -> Shape:
 def build_expanding_snap(config: ExpandingSnapConfig = ExpandingSnapConfig()) -> Shape:
     """Build a self-expanding openGrid snap body with snap-thread reliefs.
 
-    This ports the mechanical intent of `expanding_snap(...)`: standard side
-    relief cuts are omitted, directional lead-in slants remain, and the center
-    receives snap-thread, expansion, and spring-gap subtraction tools.
+    Ports `expanding_snap(...)`: the base snap (no side/bottom cuts, lead-in
+    slants kept) is flipped so its notch face is at z=0 with the thread entry,
+    the thread negative narrows by the expand distance across the split plane
+    (so a screw spreads the halves), and `expanding_spring` cuts the middle
+    gap plus the flanking spring slots along the split diagonal.
     """
     config.validate()
     body_config = replace(config.snap_body, enable_cuts=False)
     body = build_snap_body(body_config)
     if body_config.body_shape is SnapBodyShape.DIRECTIONAL and body_config.enable_directional_slants:
         body = cast(Shape, body - _snap_body_directional_slant_tool(body_config))
-    tool = _expanding_snap_removal_tool(config).translate((config.center_offset[0], config.center_offset[1], 0.0))
-    return cast(Shape, body - tool)
+    body = body.rotate(bd.Axis.Y, 180.0).translate((0.0, 0.0, body_config.thickness))
+    # Source: `left(center_position_offset[0]) back(center_position_offset[1])`.
+    offset = (-config.center_offset[0], config.center_offset[1], 0.0)
+    # The spring slots go first, while the body is still simple. The thread
+    # negative follows band by band: one boolean against all helical bands is
+    # far slower and needs gigabytes of memory in OCC.
+    body = cast(Shape, body - _expanding_spring_tool(config).translate(offset))
+    for tool in _expanding_thread_tools(config):
+        body = cast(Shape, body - tool.translate(offset))
+    return body
+
+
 def build_openconnect_head(config: OpenConnectHeadConfig = OpenConnectHeadConfig()) -> Shape:
     """Build the source openConnect rectangular head with lock reliefs."""
 
@@ -953,10 +1047,10 @@ def build_openconnect_head(config: OpenConnectHeadConfig = OpenConnectHeadConfig
     bottom = _extrude_xy_polygon(bottom_profile, config.bottom_height)
     transition = _loft_layer_polygons(
         (bottom_profile, top_profile),
-        (config.bottom_height - _EPSILON, config.bottom_height + config.middle_height),
+        (config.bottom_height, config.bottom_height + config.middle_height),
     )
     top = _extrude_xy_polygon(top_profile, config.top_height).translate(
-        (0.0, 0.0, config.bottom_height + config.middle_height - _EPSILON)
+        (0.0, 0.0, config.bottom_height + config.middle_height)
     )
     head = _fuse((bottom, transition, top))
     if config.add_nubs:
@@ -965,16 +1059,34 @@ def build_openconnect_head(config: OpenConnectHeadConfig = OpenConnectHeadConfig
 
 
 def build_openconnect_screw(config: OpenConnectScrewConfig = OpenConnectScrewConfig()) -> Shape:
-    """Build a snap-thread-backed openConnect screw with screwdriver slot."""
+    """Build a snap-thread-backed openConnect screw with coin and flat-blade slots.
+
+    Unfolded, the screw is in the head frame (outer face on z=0, threads +Z). With
+    `folded`, it is laid out flat for print-in-place folding like SCAD
+    `conditional_fold`; the folded head skips the overhang-cone intersect.
+    """
 
     config.validate()
     head = build_openconnect_head(config.head)
-    head = _subtract_connector_slot(head, config.connector_slot, config.head.total_height)
     threads = build_snap_threads(replace(config.threads, clearance=0.0)).translate(
         (0.0, 0.0, config.head.total_height - _EPSILON)
     )
-    screw = cast(Shape, head + threads)
-    return _engrave_text(screw, config.text, config.head.total_height + config.threads.height)
+    if not config.folded:
+        head = cast(Shape, head & _openconnect_overhang_cone(config.head))
+    screw = cast(Shape, (head + threads) - _openconnect_screw_slot_tool(config.connector_slot))
+    tip_z = config.head.total_height - _EPSILON + config.threads.height
+    if not config.folded:
+        return _engrave_text(screw, config.text, tip_z)
+    text = replace(
+        config.text,
+        labels=tuple(
+            replace(label, position=(label.position[0], label.position[1] + _OPENCONNECT_FOLDED_TEXT_SHIFT))
+            for label in config.text.labels
+        ),
+    )
+    screw = _engrave_text(screw, text, tip_z)
+    body_length = config.head.total_height + config.threads.height
+    return _openconnect_fold(screw, config.head.middle_to_bottom + _SCAD_EPSILON, body_length, tip_z)
 
 
 def build_multiconnect_head(
@@ -990,16 +1102,16 @@ def build_multiconnect_head(
     )
     middle_top_radius = max(_EPSILON, config.large_diameter / 2.0 - config.middle_height)
     middle = bd.Cone(config.large_diameter / 2.0, middle_top_radius, config.middle_height).translate(
-        (0.0, 0.0, config.bottom_height + config.middle_height / 2.0 - _EPSILON)
+        (0.0, 0.0, config.bottom_height + config.middle_height / 2.0)
     )
     top = bd.Cylinder(config.small_diameter / 2.0, config.top_height).translate(
-        (0.0, 0.0, config.bottom_height + config.middle_height + config.top_height / 2.0 - _EPSILON)
+        (0.0, 0.0, config.bottom_height + config.middle_height + config.top_height / 2.0)
     )
     head = _fuse((cast(Shape, bottom), cast(Shape, middle), cast(Shape, top)))
     if config.top_pattern == "coin_slot":
-        head = _subtract_connector_slot(head, connector_slot, config.total_height)
+        head = cast(Shape, head - _coin_slot_tool(connector_slot, thickness_axis=bd.Axis.Y))
     elif config.top_pattern == "dimple":
-        head = cast(Shape, head - bd.Cone(1.0, _EPSILON, 1.0).translate((0.0, 0.0, config.total_height - 0.5)))
+        head = cast(Shape, head - _multiconnect_head_dimple())
     return head
 
 
@@ -1031,6 +1143,10 @@ def build_opengrid_snap(config: OpenGridSnapConfig = OpenGridSnapConfig()) -> Sh
     body = _engrave_text(build_snap_body(config.snap_body), config.text, config.snap_body.thickness)
     if config.kind is OpenGridSnapKind.BARE:
         return body
+    if config.kind is OpenGridSnapKind.BASIC_THREADS:
+        if config.disable_threads:
+            return body
+        return cast(Shape, body - _opengrid_snap_thread_hole(config))
     attachment = _opengrid_snap_attachment(config)
     if attachment is None:
         return body
@@ -1068,7 +1184,7 @@ def build_multiconnect_part(config: MulticonnectConfig = MulticonnectConfig()) -
     if config.part_kind is MulticonnectPartKind.CONNECTOR_DOUBLE_SIDED_ROUND:
         return _multiconnect_round_connector(config, double_sided=True)
     if config.part_kind is MulticonnectPartKind.CONNECTOR_DOUBLE_SIDED_RAIL:
-        return _multiconnect_double_sided(build_multiconnect_rail(config))
+        return _multiconnect_double_sided(build_multiconnect_rail(config), config)
     if config.part_kind is MulticonnectPartKind.CONNECTOR_RAIL_DELETE_TOOL:
         return build_multiconnect_delete_tool(config)
     if config.part_kind in {
@@ -1096,7 +1212,7 @@ def build_multiconnect_rail(config: MulticonnectConfig = MulticonnectConfig()) -
     if config.rounding is MulticonnectRounding.BOTH_SIDES:
         rail = cast(Shape, rail + _multiconnect_end_cap(profile, at_end=True).translate((0.0, 0.0, config.length)))
     if config.dimples_enabled:
-        rail = rail - _multiconnect_dimples(config, spec.dimple_radius, config.length)
+        rail = rail - _multiconnect_dimples(config, spec.dimple_radius, _multiconnect_rail_dimple_z_offsets(config))
     return cast(Shape, rail)
 
 
@@ -1121,8 +1237,8 @@ def build_multiconnect_receiver(config: MulticonnectConfig = MulticonnectConfig(
         slot_depth + config.receiver_back_thickness,
         config.length,
     ).translate((0.0, (slot_depth + config.receiver_back_thickness) / 2.0, config.length / 2.0))
-    tool = _multiconnect_slot_tool(slot_config).translate(
-        (0.0, config.receiver_back_thickness, _multiconnect_slot_z_offset(slot_config, profile))
+    tool = _multiconnect_slot_tool(slot_config).rotate(bd.Axis.Y, 180.0).translate(
+        (0.0, config.receiver_back_thickness, _multiconnect_slot_top_z(slot_config, profile))
     )
     return cast(Shape, body - tool)
 
@@ -1140,10 +1256,10 @@ def build_multiconnect_backer(config: MulticonnectConfig = MulticonnectConfig())
     body = bd.Box(effective_width, slot_depth + config.receiver_back_thickness, config.length).translate(
         (0.0, (slot_depth + config.receiver_back_thickness) / 2.0, config.length / 2.0)
     )
-    slot_tool = _multiconnect_slot_tool(backer_config)
+    slot_tool = _multiconnect_slot_tool(backer_config).rotate(bd.Axis.Y, 180.0)
     slots = [
         slot_tool.translate(
-            (x_offset, config.receiver_back_thickness, _multiconnect_slot_z_offset(backer_config, profile))
+            (x_offset, config.receiver_back_thickness, _multiconnect_slot_top_z(backer_config, profile))
         )
         for x_offset in _multiconnect_slot_x_offsets(slot_count, config.grid_size)
     ]
@@ -1169,10 +1285,15 @@ def _multiconnect_is_open_ended_receiver(part_kind: MulticonnectPartKind) -> boo
     }
 
 
-def _multiconnect_slot_z_offset(config: MulticonnectConfig, profile: Sequence[Point2D]) -> float:
+def _multiconnect_slot_top_z(config: MulticonnectConfig, profile: Sequence[Point2D]) -> float:
+    """Z of the slot's closed (top) end, where the flipped slot tool's Z=0 end is placed.
+
+    The source measures dimples and on-ramps from the rail TOP, which is the
+    closed end of an open-ended slot and the +Z face of a passthrough slot.
+    """
     if not _multiconnect_is_open_ended_receiver(config.part_kind):
-        return -_EPSILON
-    return -(_multiconnect_profile_width(profile) / 2.0 + config.receiver_top_wall_thickness)
+        return config.length + _EPSILON
+    return config.length - (_multiconnect_profile_width(profile) / 2.0 + config.receiver_top_wall_thickness)
 
 
 
@@ -1308,15 +1429,22 @@ def _multiconnect_round_connector(config: MulticonnectConfig, *, double_sided: b
         spec = _multiconnect_dimensions(config)
         round_connector = cast(
             Shape,
-            round_connector - _multiconnect_dimples(config, spec.dimple_radius, 0.0),
+            round_connector - _multiconnect_dimples(config, spec.dimple_radius, (0.0,)),
         )
     if not double_sided:
         return round_connector
-    return _multiconnect_double_sided(round_connector)
+    return _multiconnect_double_sided(round_connector, config)
 
 
-def _multiconnect_double_sided(shape: Shape) -> Shape:
-    return cast(Shape, shape + shape.rotate(bd.Axis.Z, 180.0))
+def _multiconnect_double_sided(shape: Shape, config: MulticonnectConfig) -> Shape:
+    """Join a mirrored copy stem-to-stem (source ``attach(FRONT, FRONT)``), so both outer faces carry the head.
+
+    The parts are X-symmetric, so mirroring across the stem face equals the source's 180-degree turn.
+    """
+    depth = _multiconnect_profile_depth(
+        build_multiconnect_profile(replace(config, part_kind=MulticonnectPartKind.CONNECTOR_RAIL))
+    )
+    return cast(Shape, shape + shape.mirror(bd.Plane(origin=(0.0, depth, 0.0), z_dir=(0.0, 1.0, 0.0))))
 
 
 def _multiconnect_slot_tool(config: MulticonnectConfig) -> Shape:
@@ -1331,7 +1459,10 @@ def _multiconnect_slot_tool(config: MulticonnectConfig) -> Shape:
             tool + _multiconnect_end_cap(profile, at_end=True).translate((0.0, 0.0, config.length)),
         )
     if config.dimples_enabled:
-        tool = cast(Shape, tool - _multiconnect_dimples(config, spec.dimple_radius, config.length))
+        tool = cast(
+            Shape,
+            tool - _multiconnect_dimples(config, spec.dimple_radius, _multiconnect_rail_dimple_z_offsets(config)),
+        )
     if config.on_ramps_enabled:
         tool = cast(Shape, tool + _multiconnect_on_ramps(config, profile))
     return tool
@@ -1339,23 +1470,39 @@ def _multiconnect_slot_tool(config: MulticonnectConfig) -> Shape:
 
 
 
-def _multiconnect_dimples(config: MulticonnectConfig, dimple_radius: float, length: float) -> Shape:
+def _multiconnect_dimples(config: MulticonnectConfig, dimple_radius: float, z_offsets: Sequence[float]) -> Shape:
+    """Cone pockets on the head face (Y=0): radius ``dimple_size`` at the face, tapering to 0 at depth ``dimple_size``.
+
+    Matches the source ``cylinder(h=size, r1=size, r2=0)`` with its base on the face.
+    """
     dimple_size = dimple_radius * config.dimple_scale
+    height = dimple_size + _EPSILON
     dimples = [
-        bd.Cone(dimple_size, 0.0, dimple_size + _EPSILON, rotation=(90.0, 0.0, 0.0)).translate(
-            (0.0, -_EPSILON, z_offset)
+        bd.Cone(height, 0.0, height, rotation=(-90.0, 0.0, 0.0)).translate(
+            (0.0, height / 2.0 - _EPSILON, z_offset)
         )
-        for z_offset in _multiconnect_dimple_z_offsets(length, config.grid_size)
+        for z_offset in z_offsets
     ]
     return _fuse(dimples)
 
 
+def _multiconnect_rail_dimple_z_offsets(config: MulticonnectConfig) -> tuple[float, ...]:
+    """Rail dimples every grid pitch from the Z=0 end, plus the far rounded end cap's own dimple."""
+    z_offsets = _multiconnect_dimple_z_offsets(config.length, config.grid_size)
+    if config.rounding is MulticonnectRounding.BOTH_SIDES and not any(
+        math.isclose(z_offset, config.length, abs_tol=_EPSILON) for z_offset in z_offsets
+    ):
+        z_offsets = (*z_offsets, config.length)
+    return z_offsets
+
+
 def _multiconnect_dimple_z_offsets(length: float, spacing: float) -> tuple[float, ...]:
+    """Source ``zcopies(sp=-L+L%G)`` runs from the rail TOP into the rail; our Z=0 is TOP and +Z is into the rail."""
     if length <= _EPSILON:
         return (0.0,)
     count = math.ceil(length / spacing) + 1
     start = -length + length % spacing
-    return tuple(start + index * spacing for index in range(count))
+    return tuple(-(start + index * spacing) for index in reversed(range(count)))
 
 
 def _multiconnect_on_ramps(config: MulticonnectConfig, profile: Sequence[Point2D]) -> Shape:
@@ -1435,10 +1582,21 @@ def _snap_body_corner_features(config: SnapBodyConfig) -> Shape:
     top_z = config.thickness - top_height
     for sx in (-1.0, 1.0):
         for sy in (-1.0, 1.0):
-            features.append(_snap_body_corner_patch(config, sx, sy, config.top_corner_extrude, top_height, top_z))
+            features.append(_snap_body_corner_patch(config, sx, sy, config.top_corner_extrude, top_height, top_z, slope_bottom=True))
     if config.body_shape is SnapBodyShape.DIRECTIONAL and config.thickness >= _DEFAULT_TILE_THICKNESS:
         for sx in (-1.0, 1.0):
-            features.append(_snap_body_corner_patch(config, sx, 1.0, config.bottom_corner_extrude, top_height, 0.0))
+            features.append(
+                _snap_body_corner_patch(
+                    config,
+                    sx,
+                    1.0,
+                    config.bottom_corner_extrude,
+                    top_height,
+                    0.0,
+                    slope_bottom=False,
+                    fillet_radius=config.directional_corner_fillet_radius,
+                )
+            )
     return _fuse(features)
 
 
@@ -1449,19 +1607,78 @@ def _snap_body_corner_patch(
     extrude: float,
     height: float,
     z_base: float,
+    *,
+    slope_bottom: bool,
+    fillet_radius: float = 0.0,
 ) -> Shape:
+    """Corner pad on the chamfer face: source `prismoid(xang=45, yang=...)`.
+
+    The pad reaches ``extrude`` outward from the chamfer face, flush with the
+    body sides. Its face away from the body face (bottom for top pads, top for
+    the directional bottom pads) slopes at 45 degrees, so the full reach only
+    spans ``height - extrude`` at the body face, matching the board chamfer.
+    """
     if extrude <= _EPSILON or config.corner_chamfer <= _EPSILON:
         return bd.Part()
     half_width = config.width / 2.0
     half_height = config.height / 2.0
     fill = min(config.corner_chamfer, extrude * math.sqrt(2.0))
-    raw_points = (
+    inner = (
         (sx * (half_width - config.corner_chamfer), sy * half_height),
-        (sx * (half_width - config.corner_chamfer + fill), sy * half_height),
-        (sx * half_width, sy * (half_height - config.corner_chamfer + fill)),
         (sx * half_width, sy * (half_height - config.corner_chamfer)),
     )
-    return _extrude_xy_polygon(_ordered_points(raw_points), height).translate((0.0, 0.0, z_base))
+    outer = (
+        (sx * (half_width - config.corner_chamfer + fill), sy * half_height),
+        (sx * half_width, sy * (half_height - config.corner_chamfer + fill)),
+    )
+    top_z = z_base + height
+    rise = min(fill / math.sqrt(2.0), height - _EPSILON)
+    outer_low, outer_high = (z_base + rise, top_z) if slope_bottom else (z_base, top_z - rise)
+    points = (
+        *((x, y, z) for x, y in inner for z in (z_base, top_z)),
+        *((x, y, z) for x, y in outer for z in (outer_low, outer_high)),
+    )
+    pad = cast(Shape, bd.ConvexPolyhedron(points, align=bd.Align.NONE))
+    if fillet_radius <= _EPSILON:
+        return pad
+    masks = (
+        _plan_corner_fillet_mask(outer[0], inner[0], outer[1], fillet_radius, z_base, top_z),
+        _plan_corner_fillet_mask(outer[1], inner[1], outer[0], fillet_radius, z_base, top_z),
+    )
+    return cast(Shape, pad - _fuse(masks))
+
+
+def _plan_corner_fillet_mask(
+    vertex: Point2D,
+    toward_a: Point2D,
+    toward_b: Point2D,
+    radius: float,
+    lower_z: float,
+    upper_z: float,
+) -> Shape:
+    """Vertical rounding mask for the convex plan corner at ``vertex``."""
+    ua = _unit2(toward_a[0] - vertex[0], toward_a[1] - vertex[1])
+    ub = _unit2(toward_b[0] - vertex[0], toward_b[1] - vertex[1])
+    half_angle = math.acos(max(-1.0, min(1.0, ua[0] * ub[0] + ua[1] * ub[1]))) / 2.0
+    tangent = radius / math.tan(half_angle)
+    bisector = _unit2(ua[0] + ub[0], ua[1] + ub[1])
+    center_distance = radius / math.sin(half_angle)
+    center = (vertex[0] + bisector[0] * center_distance, vertex[1] + bisector[1] * center_distance)
+    kite = (
+        vertex,
+        (vertex[0] + ua[0] * tangent, vertex[1] + ua[1] * tangent),
+        center,
+        (vertex[0] + ub[0] * tangent, vertex[1] + ub[1] * tangent),
+    )
+    height = upper_z - lower_z + 2.0
+    prism = _extrude_xy_polygon(_ordered_points(kite), height).translate((0.0, 0.0, lower_z - 1.0))
+    disc = bd.Cylinder(radius, height + 2.0).translate((center[0], center[1], (lower_z + upper_z) / 2.0))
+    return cast(Shape, prism - disc)
+
+
+def _unit2(x: float, y: float) -> Point2D:
+    length = math.hypot(x, y)
+    return (x / length, y / length)
 
 
 def _ordered_points(points: Sequence[Point2D]) -> tuple[Point2D, ...]:
@@ -1476,9 +1693,15 @@ def _snap_body_nubs(config: SnapBodyConfig) -> Shape:
         spec = _snap_body_nub_spec(config, side)
         tangent_length = _snap_body_side_tangent_length(config, side) - spec.inset * 2.0
         upper_z = config.thickness - config.nub_offset_to_top
-        lower_z = max(0.0, upper_z - spec.height)
-        if tangent_length > _EPSILON and spec.depth > _EPSILON and upper_z - lower_z > _EPSILON:
-            nubs.append(_snap_body_nub(config, side, tangent_length, lower_z, upper_z, spec))
+        lower_z = upper_z - spec.height
+        if tangent_length > _EPSILON and spec.depth > _EPSILON and upper_z > _EPSILON:
+            nub = _snap_body_nub(config, side, tangent_length, lower_z, upper_z, spec)
+            if lower_z < 0.0:
+                # Source: the nub keeps its flank slope from the unclipped base,
+                # then the body bottom plane clips it (`snap_nub` nub_remove).
+                clip = bd.Box(config.width * 2.0, config.height * 2.0, upper_z).translate((0.0, 0.0, upper_z / 2.0))
+                nub = cast(Shape, nub & clip)
+            nubs.append(nub)
     return _fuse(nubs)
 
 
@@ -1575,7 +1798,8 @@ def _snap_body_cut_tools(config: SnapBodyConfig) -> Shape:
     for side in ("front", "left", "right", "back"):
         if not (config.body_shape is SnapBodyShape.DIRECTIONAL and side == "back"):
             tools.append(_snap_body_bottom_cut(config, side))
-        if side != "front" or config.enable_uninstall_notch:
+        if side != "front" or not config.enable_uninstall_notch:
+            # Source `base_snap` disables the front side cut when the notch is on.
             tools.append(_snap_body_side_cut(config, side))
     if config.body_shape is SnapBodyShape.DIRECTIONAL and config.enable_directional_slants:
         tools.append(_snap_body_directional_slant_tool(config))
@@ -1583,18 +1807,72 @@ def _snap_body_cut_tools(config: SnapBodyConfig) -> Shape:
 
 
 def _snap_body_bottom_cut(config: SnapBodyConfig, side: str) -> Shape:
+    """Relief slot `snap_cut` bottom cut: r=thickness/2 ends, square on the directional front."""
     length = _snap_body_side_tangent_length(config, side) - config.cut_width_inset * 2.0
     cut_height = max(0.0, config.thickness - config.bottom_cut_offset_to_top + _EPSILON)
-    return _snap_side_box(
-        config,
-        side,
-        length,
-        config.bottom_cut_thickness,
-        cut_height,
-        cut_height / 2.0 - _EPSILON / 2.0,
-        outside=False,
-        offset=config.bottom_cut_offset_to_edge,
-    )
+    thickness = config.bottom_cut_thickness
+    if min(length, thickness, cut_height) <= _EPSILON:
+        return bd.Part()
+    z_base = -_EPSILON / 2.0
+    if config.body_shape is SnapBodyShape.DIRECTIONAL and side == "front":
+        if config.enable_directional_slants:
+            return _snap_body_slanted_front_bottom_cut(config, length, z_base, z_base + cut_height)
+        return _snap_side_box(
+            config,
+            side,
+            length,
+            thickness,
+            cut_height,
+            z_base + cut_height / 2.0,
+            outside=False,
+            offset=config.bottom_cut_offset_to_edge,
+        )
+    with bd.BuildSketch() as sketch:
+        if length > thickness + _EPSILON:
+            bd.SlotOverall(length, thickness)
+        else:
+            bd.Circle(thickness / 2.0)
+    cut = cast(Shape, bd.extrude(sketch.sketch, amount=cut_height))
+    center = config.height / 2.0 if side in {"front", "back"} else config.width / 2.0
+    distance = center - config.bottom_cut_offset_to_edge - thickness / 2.0
+    if side in {"front", "back"}:
+        sign = 1.0 if side == "back" else -1.0
+        return cut.translate((0.0, sign * distance, z_base))
+    sign = 1.0 if side == "right" else -1.0
+    return cut.rotate(bd.Axis.Z, 90.0).translate((sign * distance, 0.0, z_base))
+
+
+def _snap_body_directional_slant(config: SnapBodyConfig) -> tuple[float, float]:
+    """Return the directional lead-in (depth at z=0, height where it reaches zero)."""
+    depth = _snap_body_standard_or_lite(config, config.directional_slant_depth_standard, config.directional_slant_depth_lite)
+    height = _snap_body_standard_or_lite(config, config.directional_slant_height_standard, config.directional_slant_height_lite)
+    return depth, height
+
+
+def _snap_body_slanted_front_bottom_cut(config: SnapBodyConfig, length: float, lower_z: float, upper_z: float) -> Shape:
+    """Directional front bottom cut shifted inward with the lead-in slant.
+
+    Source `snap_cut` (`tag_diff` remove/keep pair): below the slant height
+    the 0.6 slot moves inward by the local slant depth, so the front wall
+    keeps its thickness behind the slanted face.
+    """
+    depth, slant_height = _snap_body_directional_slant(config)
+    inner_y = -(config.height / 2.0 - config.bottom_cut_offset_to_edge)
+    half = length / 2.0
+
+    def section(z: float) -> tuple[Point3D, ...]:
+        shift = depth * max(0.0, slant_height - z) / slant_height if slant_height > _EPSILON else 0.0
+        y0 = inner_y + shift
+        y1 = y0 + config.bottom_cut_thickness
+        return ((-half, y0, z), (half, y0, z), (half, y1, z), (-half, y1, z))
+
+    split_z = min(max(slant_height, lower_z), upper_z)
+    parts: list[Shape] = []
+    if split_z - lower_z > _EPSILON:
+        parts.append(cast(Shape, bd.ConvexPolyhedron((*section(lower_z), *section(split_z)), align=bd.Align.NONE)))
+    if upper_z - split_z > _EPSILON:
+        parts.append(cast(Shape, bd.ConvexPolyhedron((*section(split_z), *section(upper_z)), align=bd.Align.NONE)))
+    return _fuse(parts)
 
 
 def _snap_body_side_cut(config: SnapBodyConfig, side: str) -> Shape:
@@ -1614,41 +1892,51 @@ def _snap_body_side_cut(config: SnapBodyConfig, side: str) -> Shape:
 
 
 def _snap_body_directional_slant_tool(config: SnapBodyConfig) -> Shape:
-    depth = _snap_body_standard_or_lite(
-        config,
-        config.directional_slant_depth_standard,
-        config.directional_slant_depth_lite,
-    )
-    height = _snap_body_standard_or_lite(
-        config,
-        config.directional_slant_height_standard,
-        config.directional_slant_height_lite,
-    )
-    length = config.width - config.cut_width_inset * 2.0
-    slant_height = min(height, config.thickness)
-    lower = _snap_body_side_rectangle(
-        config,
-        "front",
-        length,
-        0.0,
-        slant_height,
-        depth,
-        outside=False,
-        outer=True,
-        offset=config.bottom_cut_offset_to_edge + config.bottom_cut_thickness,
-    )
-    upper = _snap_body_side_rectangle(
-        config,
-        "front",
-        length,
-        slant_height,
-        slant_height + _EPSILON,
-        _EPSILON,
-        outside=False,
-        outer=False,
-        offset=config.bottom_cut_offset_to_edge + config.bottom_cut_thickness,
-    )
-    return cast(Shape, bd.ConvexPolyhedron((*lower, *upper), align=bd.Align.NONE))
+    """Directional front lead-in: source `snap_cut` face and corner slants.
+
+    The front face recedes by the slant depth at z=0 and returns to the body
+    face at the slant height; both front chamfer faces recede by depth/sqrt(2).
+    """
+    depth, slant_height = _snap_body_directional_slant(config)
+    if depth <= _EPSILON or slant_height <= _EPSILON:
+        return bd.Part()
+    half_width = config.width / 2.0
+    half_height = config.height / 2.0
+    wedges = [
+        _inward_slant_wedge((-half_width, -half_height), (half_width, -half_height), (0.0, 1.0), depth, slant_height),
+    ]
+    if config.corner_chamfer > _EPSILON:
+        corner_depth = depth / math.sqrt(2.0)
+        for sx in (-1.0, 1.0):
+            start = (sx * (half_width - config.corner_chamfer), -half_height)
+            end = (sx * half_width, -half_height + config.corner_chamfer)
+            center = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+            along = _unit2(end[0] - start[0], end[1] - start[1])
+            # Source attaches a snap-width-long prismoid centered on the chamfer face.
+            a = (center[0] - along[0] * half_width, center[1] - along[1] * half_width)
+            b = (center[0] + along[0] * half_width, center[1] + along[1] * half_width)
+            wedges.append(_inward_slant_wedge(a, b, _unit2(-sx, 1.0), corner_depth, slant_height))
+    return _fuse(wedges)
+
+
+def _inward_slant_wedge(a: Point2D, b: Point2D, normal: Point2D, depth: float, height: float) -> Shape:
+    """Wedge removing ``depth`` inward of face line ``a``-``b`` at z=0, tapering to 0 at ``height``.
+
+    Like the source prismoid it starts at the face plane, so material outside
+    the face (the front nub) is kept.
+    """
+    below = 0.1
+    bottom_depth = depth * (1.0 + below / height)
+    points: list[Point3D] = []
+    for x, y in (a, b):
+        points.extend(
+            (
+                (x, y, height),
+                (x, y, -below),
+                (x + normal[0] * bottom_depth, y + normal[1] * bottom_depth, -below),
+            )
+        )
+    return cast(Shape, bd.ConvexPolyhedron(points, align=bd.Align.NONE))
 
 
 def _snap_body_uninstall_notch_tool(config: SnapBodyConfig) -> Shape:
@@ -1662,26 +1950,21 @@ def _snap_body_uninstall_notch_tool(config: SnapBodyConfig) -> Shape:
         config.notch_gap_height_standard,
         config.notch_gap_height_lite,
     )
+    # Source `snap_uninstall_notch`: surface pocket at the top front, the gap
+    # below it flush with the front face, and a trim of the nub in front of it.
     surface = _snap_side_box(
         config,
         "front",
         config.notch_width,
         config.notch_surface_inset,
-        surface_height,
-        config.thickness - surface_height / 2.0,
+        surface_height + _EPSILON,
+        config.thickness - surface_height / 2.0 + _EPSILON / 2.0,
         outside=False,
     )
-    gap = _snap_side_box(
-        config,
-        "front",
-        config.notch_width,
-        config.notch_gap_inset,
-        gap_height,
-        config.thickness - surface_height - gap_height / 2.0,
-        outside=False,
-        offset=config.notch_surface_inset,
-    )
-    return _fuse((surface, gap))
+    gap_z = config.thickness - surface_height - gap_height / 2.0
+    gap = _snap_side_box(config, "front", config.notch_width, config.notch_gap_inset, gap_height, gap_z, outside=False)
+    trim = _snap_side_box(config, "front", config.notch_width, config.notch_gap_inset, gap_height, gap_z, outside=True)
+    return _fuse((surface, gap, trim))
 
 
 def _snap_body_side_rectangle(
@@ -1748,103 +2031,186 @@ def _snap_side_box(
     return cast(Shape, bd.Box(depth, length, height).translate((sign * x_abs, 0.0, z_center)))
 
 
-def _expanding_snap_removal_tool(config: ExpandingSnapConfig) -> Shape:
-    return _compound(
-        (
-            _expanding_thread_tool(config),
-            _expanding_spring_gap_tools(config),
-        )
-    )
+def _expanding_thread_tools(config: ExpandingSnapConfig) -> Iterator[Shape]:
+    """Source `expanding_threads`: entry, 0.05-step transition, and end bands.
 
+    Each transition/end band is a slice of the thread negative whose halves
+    across the split plane are moved together (`partition(spread=-d)` with
+    `$slop=d/2`), so the hole narrows by the local expand distance.
 
-def _expanding_thread_tool(config: ExpandingSnapConfig) -> Shape:
+    The source stacks separate `snap_threads` segments rotated to stay in
+    phase (`up(z) zrot(z * 360 / pitch)`); this slices one continuous thread
+    instead. For Basic threads that is identical. For Blunt threads the
+    source segments each end their helix 1.25 below their own top, so their
+    ridges overhang lower bands; slicing keeps one continuous blunt helix.
+    Bands abut without overlap so the per-band subtractions stay robust.
+    """
     height = config.snap_body.thickness
-    entry_height = min(_expanding_snap_entry_height(config), height)
-    end_height = min(_expanding_snap_end_height(config), max(0.0, height - entry_height))
-    transition_height = max(0.0, height - entry_height - end_height)
-    tools: list[Shape] = []
-    if entry_height > _EPSILON:
-        tools.append(_snap_thread_cut_tool(config, entry_height + _EPSILON).translate((0.0, 0.0, -_EPSILON / 2.0)))
-
-    distance = _expanding_snap_distance(config)
-    transition_offset = distance / 2.0
-    if transition_height > _EPSILON:
-        tools.extend(
-            _expanded_thread_pair(
-                config,
-                transition_height + _EPSILON,
-                entry_height - _EPSILON / 2.0,
-                transition_offset,
-            )
-        )
-    if end_height > _EPSILON:
-        tools.extend(
-            _expanded_thread_pair(
-                config,
-                end_height + _EPSILON,
-                entry_height + transition_height - _EPSILON / 2.0,
-                distance,
-            )
-        )
-    return _compound(tools)
-
-
-def _expanded_thread_pair(
-    config: ExpandingSnapConfig,
-    height: float,
-    z_base: float,
-    distance: float,
-) -> tuple[Shape, Shape]:
-    thread = _snap_thread_cut_tool(config, height)
-    return (
-        thread.translate((*_polar_offset(config.expand_split_angle, distance), z_base)),
-        thread.translate((*_polar_offset(config.expand_split_angle + 180.0, distance), z_base)),
+    entry_height = _expanding_snap_entry_height(config)
+    end_height = _expanding_snap_end_height(config)
+    transition_height = height - entry_height - end_height
+    distance = max(0.0, _expanding_snap_distance(config))
+    step = 0.05
+    segment_count = math.ceil(round(distance / step, 9)) if distance > 0.0 else 0
+    # Source: only the end segment keeps its bottom bevel, chosen from its own height.
+    end_segment_height = end_height + _EPSILON
+    end_bevel = (
+        config.threads.bottom_bevel_standard
+        if end_segment_height >= _DEFAULT_TILE_THICKNESS
+        else config.threads.bottom_bevel_lite
+        if end_segment_height >= 3.4
+        else 0.0
     )
-
-
-def _snap_thread_cut_tool(config: ExpandingSnapConfig, height: float) -> Shape:
-    return _snap_thread_loft(
-        replace(config.threads, height=height),
-        base_segments=_SNAP_THREAD_CUT_BASE_SEGMENTS,
-        z_segments_per_pitch=_SNAP_THREAD_CUT_Z_SEGMENTS_PER_PITCH,
+    threads = replace(
+        config.threads,
+        height=height + _EPSILON,
+        top_bevel=0.0,
+        bottom_bevel_standard=end_bevel,
+        bottom_bevel_lite=end_bevel,
+        blunt_cutoff=False,
     )
+    # Half the thread resolution (chord sag 0.008 mm at d=16.5): every band adds
+    # its helical faces to the body, and 144 segments need ~5 GB to subtract.
+    negative = _snap_thread_loft(threads, base_segments=_SNAP_THREAD_BASE_SEGMENTS // 2).translate((0.0, 0.0, -_EPSILON / 2.0))
+    margin = 4.0
+    bands: list[tuple[float, float, float]] = []
+    if entry_height > 0.0:
+        bands.append((-margin, entry_height, 0.0))
+    if segment_count > 0:
+        height_step = transition_height / segment_count
+        for index in range(segment_count):
+            z0 = entry_height + height_step * index
+            bands.append((z0, z0 + height_step, min(distance, step * (index + 1))))
+    elif transition_height > 0.0:
+        bands.append((entry_height, entry_height + transition_height, 0.0))
+    if end_height > 0.0:
+        bands.append((entry_height + transition_height, height + margin, distance))
+    size = 4.0 * max(config.snap_body.width, config.snap_body.height)
+    for lower, upper, band_distance in bands:
+        slab = bd.Box(size, size, upper - lower).translate((0.0, 0.0, (lower + upper) / 2.0))
+        piece = cast(Shape, negative & slab)
+        yield _expanding_partition_squeeze(config, piece, band_distance) if band_distance > 0.0 else piece
 
 
+def _expanding_partition_squeeze(config: ExpandingSnapConfig, tool: Shape, distance: float) -> Shape:
+    """Drop the |p.u| < distance/2 band of ``tool`` and close the gap (BOSL2 `partition`).
+
+    The two halves are fused into one solid: subtracting them separately
+    leaves coplanar split faces in the body that later cuts can silently miss.
+    """
+    angle = math.radians(config.expand_split_angle)
+    # `zrot(-a) partition()` moves the halves along the rotated BACK axis.
+    ux, uy = math.sin(angle), math.cos(angle)
+    size = 4.0 * max(config.snap_body.width, config.snap_body.height, config.snap_body.thickness)
+    shift = (distance + _EPSILON) / 2.0
+    halves: list[Shape] = []
+    for sign in (1.0, -1.0):
+        reach = distance / 2.0 + size / 2.0
+        mask = bd.Box(size, size, size).rotate(bd.Axis.Z, math.degrees(math.atan2(uy, ux))).translate((sign * ux * reach, sign * uy * reach, 0.0))
+        halves.append(cast(Shape, tool & mask).translate((-sign * ux * shift, -sign * uy * shift, 0.0)))
+    return _fuse(halves)
 
 
-def _expanding_spring_gap_tools(config: ExpandingSnapConfig) -> Shape:
+def _expanding_spring_tool(config: ExpandingSnapConfig) -> Shape:
+    """Source `expanding_spring`, in the flipped snap frame, rotated by the split angle.
+
+    Per diagonal end: a middle gap from inside the thread hole to one spring
+    thickness short of the corner face (following the corner pad / slant
+    profile), face chamfers on it, and two flanking slots offset by
+    spring thickness + gap that run from the spring out through the corner.
+    """
     body = config.snap_body
+    thickness = body.thickness
+    gap = config.spring_gap
+    chamfer = config.spring_face_chamfer
     thread_radius = config.threads.effective_diameter / 2.0
-    reach = thread_radius + config.spring_to_center_thickness + config.spring_thickness
-    gap_length = max(body.width, body.height)
-    gap_height = body.thickness + 2.0 * _EPSILON
-    radial_gaps = (
-        _radial_gap_tool(config.expand_split_angle, reach, gap_length, config.spring_gap, gap_height),
-        _radial_gap_tool(config.expand_split_angle + 180.0, reach, gap_length, config.spring_gap, gap_height),
+    gap_length = thread_radius + config.spring_to_center_thickness
+    inner_diagonal = (body.width + body.height) / 2.0 / math.sqrt(2.0) - body.corner_chamfer / math.sqrt(2.0)
+    start = inner_diagonal - gap_length - config.spring_thickness
+    edge = body.corner_edge_height
+    top_extrude = body.top_corner_extrude
+    bottom_extrude = body.bottom_corner_extrude
+    slant_depth, slant_height = _snap_body_directional_slant(body)
+    directional = body.body_shape is SnapBodyShape.DIRECTIONAL
+    end_types = (
+        "corners" if directional and thickness >= _DEFAULT_TILE_THICKNESS else "none",
+        "slant" if directional and body.enable_directional_slants else "none",
     )
-    center_split = _rotated_box(
-        max(body.width, body.height) + 2.0,
-        config.spring_gap,
-        gap_height,
-        config.expand_split_angle + 90.0,
-        (0.0, 0.0, body.thickness / 2.0),
-    )
-    return _compound((*radial_gaps, center_split))
+    tools: list[Shape] = []
+    for index, end_type in enumerate(end_types):
+        top_corner = ((gap_length, edge), (gap_length + top_extrude, edge - top_extrude), (gap_length + top_extrude, 0.0))
+        if end_type == "slant":
+            outer = ((gap_length - slant_depth, thickness), (gap_length, thickness - slant_height))
+            bottom_to_side = -slant_depth
+        elif end_type == "corners":
+            outer = (
+                (gap_length + bottom_extrude, thickness),
+                (gap_length + bottom_extrude, thickness - (edge - bottom_extrude)),
+                (gap_length, thickness - edge),
+            )
+            bottom_to_side = bottom_extrude
+        else:
+            outer = ((gap_length, thickness),)
+            bottom_to_side = 0.0
+        profile = ((0.0, 0.0), (0.0, thickness), *outer, *top_corner)
+        parts = [
+            _expanding_middle_gap(profile, start, gap + _EPSILON),
+            _flared_slot(gap_length, gap, chamfer, thickness - chamfer - _EPSILON / 2.0, thickness + _EPSILON / 2.0, flare_low=False, flare_high=True).translate(
+                (0.0, start + bottom_to_side, 0.0)
+            ),
+            _flared_slot(gap_length, gap, chamfer, -_EPSILON / 2.0, chamfer + _EPSILON / 2.0, flare_low=True, flare_high=False).translate(
+                (0.0, start + top_extrude, 0.0)
+            ),
+        ]
+        flank = _flared_slot(gap_length, gap, chamfer, -_EPSILON / 2.0, thickness + _EPSILON / 2.0, flare_low=True, flare_high=True)
+        flank = flank.rotate(bd.Axis.Z, 180.0).translate(
+            (config.spring_thickness + gap, gap_length + thread_radius + config.spring_to_center_thickness, 0.0)
+        )
+        parts.extend((flank, flank.mirror(bd.Plane.XZ)))
+        tools.append(_compound(parts).rotate(bd.Axis.Z, 180.0 * index))
+    return _compound(tools).rotate(bd.Axis.Z, config.expand_split_angle)
 
 
-def _radial_gap_tool(angle_degrees: float, start: float, length: float, width: float, height: float) -> Shape:
-    center_distance = start + length / 2.0
-    x, y = _polar_offset(angle_degrees, center_distance)
-    return _rotated_box(length, width, height, angle_degrees, (x, y, height / 2.0 - _EPSILON))
+def _expanding_middle_gap(profile: Sequence[Point2D], start: float, width: float) -> Shape:
+    """Side profile (radial, z) swept across ``width``.
+
+    The source also rounds the slot edges (`os_smooth(joint=gap/2)` at both
+    sweep ends). That full-width bullnose is left out: OCC cannot fillet a
+    plate to half its thickness for wider gaps. The face edges are covered by
+    the flared face chamfers anyway, and the remaining difference is the
+    slot's outer end, about 0.02 mm^2 per mm of edge.
+    """
+    with bd.BuildSketch(bd.Plane.YZ) as sketch:
+        bd.Polygon(*((start + u, v) for u, v in profile), align=None)
+    return cast(Shape, bd.extrude(sketch.sketch, amount=width / 2.0, both=True))
 
 
-def _rotated_box(width: float, depth: float, height: float, angle_degrees: float, center: Point3D) -> Shape:
-    return cast(Shape, bd.Box(width, depth, height).rotate(bd.Axis.Z, angle_degrees).translate(center))
+def _flared_slot(length: float, width: float, flare: float, low_z: float, high_z: float, *, flare_low: bool, flare_high: bool) -> Shape:
+    """Sweep of the source `gap_top_profile_rounded` (y 0..length, round far end).
 
+    ``os_chamfer(width=-flare)`` ends widen the outline by ``flare`` at the
+    face, narrowing back over ``flare`` depth.
+    """
 
-def _polar_offset(angle_degrees: float, distance: float) -> Point2D:
-    angle = math.radians(angle_degrees)
-    return (math.cos(angle) * distance, math.sin(angle) * distance)
+    def outline(grow: float, z: float) -> list[Point3D]:
+        # `round_corners(radius=width/2)` keeps the tip at y=length.
+        radius = width / 2.0 + grow
+        arc_center = length - width / 2.0
+        points: list[Point3D] = [(-radius, -grow, z), (radius, -grow, z)]
+        steps = 16
+        for k in range(steps + 1):
+            theta = math.pi * k / steps
+            points.append((radius * math.cos(theta), arc_center + radius * math.sin(theta), z))
+        return points
+
+    lower = low_z + (flare if flare_low else 0.0)
+    upper = high_z - (flare if flare_high else 0.0)
+    pieces = [cast(Shape, bd.ConvexPolyhedron((*outline(0.0, lower), *outline(0.0, upper)), align=bd.Align.NONE))]
+    if flare_low:
+        pieces.append(cast(Shape, bd.ConvexPolyhedron((*outline(flare, low_z), *outline(0.0, lower)), align=bd.Align.NONE)))
+    if flare_high:
+        pieces.append(cast(Shape, bd.ConvexPolyhedron((*outline(0.0, upper), *outline(flare, high_z)), align=bd.Align.NONE)))
+    return _fuse(pieces)
 
 
 def _expanding_snap_distance(config: ExpandingSnapConfig) -> float:
@@ -1872,92 +2238,93 @@ def build_snap_threads(config: SnapThreadConfig = SnapThreadConfig()) -> Shape:
     return _snap_thread_loft(config)
 
 
-def _snap_thread_loft(
-    config: SnapThreadConfig,
-    *,
-    base_segments: int = _SNAP_THREAD_BASE_SEGMENTS,
-    z_segments_per_pitch: int = _SNAP_THREAD_Z_SEGMENTS_PER_PITCH,
-) -> Shape:
-    diameter = config.effective_diameter
-    rotation = config.offset_angle + _OG_SNAP_THREADS_COMPATIBILITY_ANGLE
-    bottom_bevel = _snap_thread_bottom_bevel(config)
-    angles = _snap_thread_angles(rotation, base_segments=base_segments)
+def _snap_thread_loft(config: SnapThreadConfig, *, base_segments: int = _SNAP_THREAD_BASE_SEGMENTS) -> Shape:
+    """Source `snap_threads`: the thread ridge swept along its helix and fused to a root-diameter core.
+
+    Basic follows BOSL2 `generic_threaded_rod(bevel1=top_bevel, bevel2=bottom_bevel)`: the top bevel is at
+    z=0, the height-dependent bottom bevel at z=height, and both bevel cones cut through the core.
+    Blunt follows `blunt_threads` as called by `snap_threads` (no bevels): a finite helix that starts below
+    z=0 and ends inside the part with a 10 degree lead-in taper; `blunt_cutoff` removes the helix below z=0.
+    Both types share the same helix phase, so the crest centre at actual angle a is at z = pitch * (a - rotation) / 360.
+    """
+    radius = config.effective_diameter / 2.0
+    height = config.height
     profile = _scaled_snap_thread_profile(config.pitch)
-    sketches: list[bd.Sketch] = []
-    for z in _snap_thread_z_values(config, rotation, z_segments_per_pitch=z_segments_per_pitch):
-        points = tuple(
-            _snap_thread_point(config, profile, angle, z, diameter, bottom_bevel, rotation)
-            for angle in angles
-        )
-        with bd.BuildSketch(bd.Plane.XY.offset(z)) as sketch:
-            bd.Polygon(points, align=None)
-        sketches.append(sketch.sketch)
-    return cast(Shape, bd.loft(sketches, ruled=True, clean=False))
-
-
-def _snap_thread_point(
-    config: SnapThreadConfig,
-    profile: Sequence[Point2D],
-    angle_degrees: float,
-    z: float,
-    diameter: float,
-    bottom_bevel: float,
-    rotation: float,
-) -> Point2D:
-    offset = _snap_thread_radial_offset(config, profile, angle_degrees, z)
-    radius = diameter / 2.0 + offset
-    radius = min(radius, _snap_thread_bevel_radius(config, z, diameter, bottom_bevel))
-
-    angle = math.radians(angle_degrees + rotation)
-    return (radius * math.cos(angle), radius * math.sin(angle))
-
-
-def _snap_thread_radial_offset(config: SnapThreadConfig, profile: Sequence[Point2D], angle_degrees: float, z: float) -> float:
-    pitch = config.pitch
-    local_z = z
+    root_radius = radius + profile[0][1]
     if config.thread_type is ThreadType.BLUNT:
-        local_z = _snap_thread_blunt_local_z(config, z)
-    local = ((local_z - angle_degrees * pitch / 360.0 + pitch / 2.0) % pitch) - pitch / 2.0
-    root_offset = profile[0][1]
-    if local < profile[0][0] or local > profile[-1][0]:
-        return root_offset
-    for (x0, y0), (x1, y1) in zip(profile, profile[1:]):
-        if x0 <= local <= x1:
-            if x0 == x1:
-                return y1
-            ratio = (local - x0) / (x1 - x0)
-            return y0 + (y1 - y0) * ratio
-    return root_offset
+        start = min(height - _SNAP_THREAD_LEAD_IN_OFFSET, 0.0) + _SNAP_THREAD_HELIX_LIFT - _SNAP_THREAD_MIN_TURNS * config.pitch
+        end = height - _SNAP_THREAD_LEAD_IN_OFFSET + _SNAP_THREAD_HELIX_LIFT - _SNAP_THREAD_END_GAP
+        if not config.blunt_cutoff:
+            ridge = _snap_thread_ridge(config, start - _SNAP_THREAD_END_GAP, end, base_segments, taper=True)
+            return cast(Shape, bd.Solid.make_cylinder(root_radius, height) + ridge)
+        ridge = _snap_thread_ridge(config, start - _SNAP_THREAD_CLIP_MARGIN, end, base_segments, taper=True)
+        core = bd.Solid.make_cylinder(root_radius, height + 1.0, bd.Plane.XY.offset(-1.0))
+        return cast(Shape, (core + ridge) & bd.Solid.make_cylinder(radius + 1.0, height))
+
+    half_width = profile[-1][0]
+    ridge = _snap_thread_ridge(
+        config,
+        -half_width - _SNAP_THREAD_CLIP_MARGIN,
+        height + half_width + _SNAP_THREAD_CLIP_MARGIN,
+        base_segments,
+        taper=False,
+    )
+    core = bd.Solid.make_cylinder(root_radius, height + 2.0, bd.Plane.XY.offset(-1.0))
+    envelope = _snap_thread_bevel_envelope(radius, height, config.top_bevel, _snap_thread_bottom_bevel(config))
+    return cast(Shape, (core + ridge) & envelope)
 
 
-def _snap_thread_blunt_local_z(config: SnapThreadConfig, z: float) -> float:
-    return z + _snap_thread_blunt_z_shift(config)
+def _snap_thread_ridge(config: SnapThreadConfig, start: float, end: float, base_segments: int, *, taper: bool) -> bd.Solid:
+    """Ruled loft of radial profile sections whose crest centres run from z=start to z=end along the helix.
+
+    Every section carries the exact profile corners, so only the angular chord (`base_segments` per turn)
+    deviates from the true helicoid. `taper` appends BOSL2's default sqrt lead-in over the blunt angle.
+    """
+    count = max(2, math.ceil((end - start) / config.pitch * base_segments))
+    sections = [_snap_thread_section(config, start + (end - start) * index / count, 1.0, 1.0) for index in range(count + 1)]
+    if taper:
+        taper_height = config.pitch * _SNAP_THREAD_BLUNT_ANGLE / 360.0
+        for index in range(_SNAP_THREAD_TAPER_SAMPLES - 1, -1, -1):
+            remaining = (index / _SNAP_THREAD_TAPER_SAMPLES) ** 2
+            sections.append(_snap_thread_section(config, end + taper_height * (1.0 - remaining), *_snap_thread_lead_in_scale(remaining)))
+    return bd.Solid.make_loft(sections, ruled=True)
 
 
-def _snap_thread_blunt_z_shift(config: SnapThreadConfig) -> float:
-    bottom_bevel = _snap_thread_bottom_bevel(config)
-    offset_height = min(config.height - _SNAP_THREAD_LEAD_IN_OFFSET - bottom_bevel, 0.0)
-    return _SNAP_THREAD_MIN_TURNS * config.pitch - offset_height - 0.25
+def _snap_thread_lead_in_scale(remaining: float) -> tuple[float, float]:
+    """BOSL2 `_leadin_sqrt`: (axial width scale, radial height scale) at the given remaining lead-in fraction."""
+    end_scale = 0.05
+    height_scale = math.sqrt(remaining + end_scale**2 * (1.0 - remaining))
+    return height_scale + (1.0 - height_scale) * 0.25, height_scale
 
 
-def _snap_thread_bevel_radius(
-    config: SnapThreadConfig,
-    z: float,
-    diameter: float,
-    bottom_bevel: float,
-    *,
-    clamp_to_root: bool = True,
-) -> float:
-    radius = diameter / 2.0
-    if bottom_bevel > 0.0 and z < bottom_bevel:
-        radius = min(radius, diameter / 2.0 - bottom_bevel + z)
-    if config.top_bevel > 0.0 and z > config.height - config.top_bevel:
-        radius = min(radius, diameter / 2.0 - z + config.height - config.top_bevel)
-    if config.thread_type is ThreadType.BLUNT and config.blunt_cutoff and z > config.height - _EPSILON:
-        radius = min(radius, diameter / 2.0 - config.pitch / 3.0)
-    if clamp_to_root:
-        return max(radius, diameter / 2.0 - config.pitch / 3.0)
-    return radius
+def _snap_thread_section(config: SnapThreadConfig, crest_z: float, width_scale: float, height_scale: float) -> bd.Wire:
+    profile = _scaled_snap_thread_profile(config.pitch)
+    root = profile[0][1]
+    radius = config.effective_diameter / 2.0
+    angle = math.radians(config.offset_angle + _OG_SNAP_THREADS_COMPATIBILITY_ANGLE + 360.0 * crest_z / config.pitch)
+    # The base dips just inside the core so the fuse never meets the ruled base faces tangentially.
+    base = root - _SNAP_THREAD_ROOT_OVERLAP
+    points = (
+        (base, profile[0][0] * width_scale),
+        *((root + (offset - root) * height_scale, axial * width_scale) for axial, offset in profile),
+        (base, profile[-1][0] * width_scale),
+    )
+    cos_angle, sin_angle = math.cos(angle), math.sin(angle)
+    return bd.Wire.make_polygon(
+        [((radius + offset) * cos_angle, (radius + offset) * sin_angle, crest_z + axial) for offset, axial in points],
+        close=True,
+    )
+
+
+def _snap_thread_bevel_envelope(radius: float, height: float, bottom_face_bevel: float, top_face_bevel: float) -> bd.Solid:
+    """Solid of revolution bounding the thread to z 0..height with 45 degree bevel cones at either face."""
+    outer = radius + 1.0
+    points: list[tuple[float, float]] = [(0.0, 0.0)]
+    points += [(radius - bottom_face_bevel, 0.0), (outer, bottom_face_bevel + 1.0)] if bottom_face_bevel > 0.0 else [(outer, 0.0)]
+    points += [(outer, height - top_face_bevel - 1.0), (radius - top_face_bevel, height)] if top_face_bevel > 0.0 else [(outer, height)]
+    points.append((0.0, height))
+    face = bd.Face(bd.Wire.make_polygon([(x, 0.0, z) for x, z in points], close=True))
+    return bd.Solid.revolve(face, 360.0, bd.Axis.Z)
 
 
 def _snap_thread_bottom_bevel(config: SnapThreadConfig) -> float:
@@ -1971,42 +2338,6 @@ def _snap_thread_bottom_bevel(config: SnapThreadConfig) -> float:
 def _scaled_snap_thread_profile(pitch: float) -> tuple[Point2D, ...]:
     return tuple((x * pitch, y * pitch) for x, y in _OG_SNAP_THREADS_PROFILE)
 
-
-def _snap_thread_angles(rotation: float, *, base_segments: int = _SNAP_THREAD_BASE_SEGMENTS) -> tuple[float, ...]:
-    del rotation
-    return tuple(360.0 * index / base_segments for index in range(base_segments))
-
-
-def _snap_thread_z_values(
-    config: SnapThreadConfig,
-    rotation: float,
-    *,
-    z_segments_per_pitch: int = _SNAP_THREAD_Z_SEGMENTS_PER_PITCH,
-) -> tuple[float, ...]:
-    segment_count = max(2, math.ceil(config.height / config.pitch * z_segments_per_pitch))
-    z_values = {_snap_thread_z_key(config.height * index / segment_count): config.height * index / segment_count for index in range(segment_count + 1)}
-    profile = _scaled_snap_thread_profile(config.pitch)
-    for axis in (0.0, 90.0, 180.0, 270.0):
-        angle = (axis - rotation) % 360.0
-        local_base = angle * config.pitch / 360.0
-        for profile_z, _ in profile:
-            local_z = local_base + profile_z
-            while local_z <= config.height + config.pitch:
-                z = _snap_thread_z_from_local_z(config, local_z)
-                if 0.0 <= z <= config.height:
-                    z_values[_snap_thread_z_key(z)] = z
-                local_z += config.pitch
-    return tuple(value for _, value in sorted(z_values.items()))
-
-
-def _snap_thread_z_key(z: float) -> int:
-    return round(z * 1_000_000_000)
-
-
-def _snap_thread_z_from_local_z(config: SnapThreadConfig, local_z: float) -> float:
-    if config.thread_type is ThreadType.BLUNT:
-        return local_z - _snap_thread_blunt_z_shift(config)
-    return local_z
 
 def export_grid(config: GridConfig, path: str | Path) -> None:
     bd.export_stl(build_open_grid(config), str(path))
@@ -2023,9 +2354,10 @@ def _replace_grid(
 
 
 def _single_board(config: GridConfig, kind: BoardKind) -> Shape:
-    thickness = _selected_thickness(config, kind)
+    # Lattice tools use the lattice thickness; the Lite adhesive base hangs below z=0.
+    thickness = config.lite_tile_thickness if kind is BoardKind.LITE else _selected_thickness(config, kind)
     board = _board_lattice(config, kind)
-    board = _apply_corner_modifications(board, config, thickness)
+    board = _apply_corner_modifications(board, config, thickness, both_faces=kind is BoardKind.HEAVY)
     if config.connector_holes:
         board = _subtract_connector_holes(board, config, thickness, kind)
     if kind is BoardKind.LITE and config.add_adhesive_base:
@@ -2049,7 +2381,7 @@ def _board_lattice(config: GridConfig, kind: BoardKind) -> Shape:
     for ix in range(config.board_width):
         for iy in range(config.board_height):
             pieces.append(tile.translate((x0 + ix * config.tile_size, y0 + iy * config.tile_size, 0.0)))
-    return _compound(pieces)
+    return _fuse(pieces)
 
 
 ProfileLayer: TypeAlias = tuple[float, float, float]
@@ -2128,10 +2460,13 @@ def _interpolated_offset(layers: Sequence[tuple[float, float]], z_value: float) 
 
 
 def _heavy_layers(config: GridConfig) -> tuple[ProfileLayer, ...]:
+    # QuackWorks openGridHeavy: each half carries the Heavy capture lip at its outer face
+    # (lower half mirrored), and the gap is the half's inner-face (z=0) section.
     full = _full_layers(config.tile_thickness, heavy_profile=True)
-    web_end = config.tile_thickness + config.heavy_tile_gap
-    top = tuple((web_end + (config.tile_thickness - z), side, corner) for z, side, corner in reversed(full))
-    return (*full, *top)
+    bottom = tuple((config.tile_thickness - z, side, corner) for z, side, corner in reversed(full))
+    top_start = config.tile_thickness + config.heavy_tile_gap
+    top = tuple((top_start + z, side, corner) for z, side, corner in full)
+    return (*bottom, *top)
 
 
 def _max_profile_offset() -> float:
@@ -2204,12 +2539,12 @@ def _rotate_points(points: Iterable[Point2D], angle_degrees: float) -> tuple[Poi
     return tuple((x * cos_a - y * sin_a, x * sin_a + y * cos_a) for x, y in points)
 
 
-def _apply_corner_modifications(board: Shape, config: GridConfig, thickness: float) -> Shape:
+def _apply_corner_modifications(board: Shape, config: GridConfig, thickness: float, *, both_faces: bool = False) -> Shape:
     board = _subtract_chamfers(board, config, thickness)
     screw_positions = _screw_positions(config)
     if not screw_positions:
         return board
-    return board - _screw_tool(config, thickness, screw_positions)
+    return board - _screw_tool(config, thickness, screw_positions, both_faces=both_faces)
 
 
 def _subtract_chamfers(board: Shape, config: GridConfig, thickness: float) -> Shape:
@@ -2280,15 +2615,18 @@ def _internal_grid_positions(config: GridConfig) -> Iterable[Point2D]:
 
 
 def _row_column_screw_positions(config: GridConfig) -> Iterable[Point2D]:
+    # QuackWorks: translate(parity shift) grid_copies(spacing=[c*T, r*T], size=[(W-2)*T, (H-2)*T]).
     col_step = max(1, config.screw_every_x_columns)
     row_step = max(1, config.screw_every_x_rows)
     x_shift = 0.0 if ((config.board_width - 2) % col_step) % 2 == 0 else -config.tile_size / 2.0
     y_shift = 0.0 if ((config.board_height - 2) % row_step) % 2 == 0 else config.tile_size / 2.0
-    for ix in range(1, config.board_width, col_step):
-        for iy in range(1, config.board_height, row_step):
-            x = ix * config.tile_size - config.board_width * config.tile_size / 2.0 + x_shift
-            y = iy * config.tile_size - config.board_height * config.tile_size / 2.0 + y_shift
-            yield (x, y)
+    x_count = max(0, math.floor((config.board_width - 2) / col_step) + 1)
+    y_count = max(0, math.floor((config.board_height - 2) / row_step) + 1)
+    x_pitch = col_step * config.tile_size
+    y_pitch = row_step * config.tile_size
+    for iy in range(y_count):
+        for ix in range(x_count):
+            yield ((ix - (x_count - 1) / 2.0) * x_pitch + x_shift, (iy - (y_count - 1) / 2.0) * y_pitch + y_shift)
 
 
 def _custom_screw_positions(config: GridConfig) -> Iterable[Point2D]:
@@ -2303,12 +2641,17 @@ def _custom_screw_positions(config: GridConfig) -> Iterable[Point2D]:
             )
 
 
-def _screw_tool(config: GridConfig, thickness: float, positions: Sequence[Point2D]) -> Shape:
+def _screw_tool(config: GridConfig, thickness: float, positions: Sequence[Point2D], *, both_faces: bool = False) -> Shape:
+    """Through holes plus head counterbore/countersink on the top face (and the bottom face if ``both_faces``)."""
     through = thickness + 2.0 * _EPSILON
+    mid_plane = bd.Plane.XY.offset(thickness / 2.0)
     bits: list[Shape] = []
     for x, y in positions:
         bits.append(bd.Cylinder(config.screw_diameter / 2.0, through).translate((x, y, thickness / 2.0)))
-        bits.extend(_screw_head_tools(config, thickness, x, y))
+        heads = _screw_head_tools(config, thickness, x, y)
+        bits.extend(heads)
+        if both_faces:
+            bits.extend(head.mirror(mid_plane) for head in heads)
     return _fuse(bits)
 
 
@@ -2321,7 +2664,7 @@ def _screw_head_tools(config: GridConfig, thickness: float, x: float, y: float) 
     if config.screw_head_is_countersunk and cone_height > _EPSILON:
         tools.append(
             bd.Cone(config.screw_diameter / 2.0, config.screw_head_diameter / 2.0, cone_height).translate(
-                (x, y, thickness - inset - cone_height / 2.0)
+                (x, y, thickness + _EPSILON - inset - cone_height / 2.0)
             )
         )
     return tools
@@ -2337,7 +2680,12 @@ def _subtract_connector_holes(board: Shape, config: GridConfig, thickness: float
     positions = _connector_positions(config)
     if not positions:
         return board
-    tools = [_connector_tool(config, thickness, kind, position) for position in positions]
+    base_tool = _connector_slot_delete_tool_base(config.connector_slot_delete_tool, _CONNECTOR_MOUTH_OVERHANG)
+    tools = [
+        _connector_tool(config, base_tool, position, z_base)
+        for z_base in _connector_z_bases(config, thickness, kind)
+        for position in positions
+    ]
     return board - _fuse(tools)
 
 
@@ -2362,39 +2710,19 @@ def _edge_slot_offsets(count: int, tile_size: float) -> tuple[float, ...]:
     return tuple((i - count / 2.0) * tile_size for i in range(1, count))
 
 
-def _connector_tool(config: GridConfig, thickness: float, kind: BoardKind, position: tuple[str, float]) -> Shape:
+def _connector_tool(config: GridConfig, base_tool: Shape, position: tuple[str, float], z_base: float) -> Shape:
     side, offset = position
-    z_base = _connector_z_base(thickness, kind, config.connector_slot_delete_tool.height)
-    width = config.board_width * config.tile_size
-    height = config.board_height * config.tile_size
-    base_tool = _connector_slot_delete_tool_base(config.connector_slot_delete_tool)
-    if side == "right":
-        return _right_connector_slot_delete_tool(
-            base_tool,
-            edge=width / 2.0,
-            offset=offset,
-            z_base=z_base,
-        )
-    if side == "left":
-        return _left_connector_slot_delete_tool(
-            base_tool,
-            edge=width / 2.0,
-            offset=offset,
-            z_base=z_base,
-        )
-    if side == "top":
-        return _top_connector_slot_delete_tool(
-            base_tool,
-            edge=height / 2.0,
-            offset=offset,
-            z_base=z_base,
-        )
-    return _bottom_connector_slot_delete_tool(
-        base_tool,
-        edge=height / 2.0,
-        offset=offset,
-        z_base=z_base,
-    )
+    span = config.board_width if side in {"left", "right"} else config.board_height
+    return _place_connector_slot_tool(base_tool, side, edge=span * config.tile_size / 2.0, offset=offset, z_base=z_base)
+
+
+def _connector_z_bases(config: GridConfig, thickness: float, kind: BoardKind) -> tuple[float, ...]:
+    cutout_height = config.connector_slot_delete_tool.height
+    if kind is BoardKind.HEAVY:
+        # QuackWorks openGridHeavy: one slot at mid-height of each Full half, none in the gap.
+        lower = _connector_z_base(config.tile_thickness, BoardKind.FULL, cutout_height)
+        return (lower, lower + config.tile_thickness + config.heavy_tile_gap)
+    return (_connector_z_base(thickness, kind, cutout_height),)
 
 
 def _connector_z_base(
@@ -2410,60 +2738,49 @@ def _connector_z_base(
     return max(0.0, (thickness - cutout_height) / 2.0)
 
 
-def _right_connector_slot_delete_tool(
-    base_tool: Shape,
-    *,
-    edge: float,
-    offset: float,
-    z_base: float,
-) -> Shape:
-    return base_tool.rotate(bd.Axis.Z, 180.0).translate((edge + _EPSILON, offset, z_base))
+_CONNECTOR_SIDE_ROTATION = {"left": 0.0, "right": 180.0, "top": -90.0, "bottom": 90.0}
 
 
-def _left_connector_slot_delete_tool(
-    base_tool: Shape,
-    *,
-    edge: float,
-    offset: float,
-    z_base: float,
-) -> Shape:
-    return base_tool.translate((-edge - _EPSILON, offset, z_base))
-
-
-def _top_connector_slot_delete_tool(
-    base_tool: Shape,
-    *,
-    edge: float,
-    offset: float,
-    z_base: float,
-) -> Shape:
-    return base_tool.rotate(bd.Axis.Z, -90.0).translate((offset, edge + _EPSILON, z_base))
-
-
-def _bottom_connector_slot_delete_tool(
-    base_tool: Shape,
-    *,
-    edge: float,
-    offset: float,
-    z_base: float,
-) -> Shape:
-    return base_tool.rotate(bd.Axis.Z, 90.0).translate((offset, -edge - _EPSILON, z_base))
+def _place_connector_slot_tool(base_tool: Shape, side: str, *, edge: float, offset: float, z_base: float) -> Shape:
+    """Place an edge-origin (+X inward) slot tool on a board side; the tool carries its own mouth overhang."""
+    x, y = {"left": (-edge, offset), "right": (edge, offset), "top": (offset, edge), "bottom": (offset, -edge)}[side]
+    return base_tool.rotate(bd.Axis.Z, _CONNECTOR_SIDE_ROTATION[side]).translate((x, y, z_base))
 
 
 def _adhesive_base(config: GridConfig) -> Shape:
+    # QuackWorks adhesiveBase: the slab gets the same corner modifications (chamfers and screw holes).
     width = config.board_width * config.tile_size
     height = config.board_height * config.tile_size
-    base = bd.Box(width, height, config.adhesive_base_thickness).translate((0.0, 0.0, -config.adhesive_base_thickness / 2.0))
-    return _subtract_chamfers(base, config, config.adhesive_base_thickness)
+    thickness = config.adhesive_base_thickness
+    base = bd.Box(width, height, thickness).translate((0.0, 0.0, thickness / 2.0))
+    return _apply_corner_modifications(base, config, thickness).translate((0.0, 0.0, -thickness))
 
 
 def _stacked_boards(config: GridConfig, stack_count: int) -> Shape:
+    # QuackWorks openGrid.scad:127-150: every Full board is zflip()ped; Lite/Heavy boards alternate
+    # orientation per index so like faces meet across each interface.
     thickness = _selected_thickness(config, config.kind)
     spacing = thickness + _adjusted_interface_thickness(config) + 2.0 * config.interface_separation
-    boards = [_single_board(config, config.kind).translate((0.0, 0.0, i * spacing)) for i in range(stack_count)]
+    board = _single_board(config, config.kind)
+    flipped = board.mirror(bd.Plane.XY.offset(thickness / 2.0))
+    stack = [flipped if _stack_board_is_flipped(config.kind, i) else board for i in range(stack_count)]
+    pieces = [stacked.translate((0.0, 0.0, i * spacing)) for i, stacked in enumerate(stack)]
     if config.stacking_method is StackingMethod.INTERFACE_LAYER:
-        boards.extend(_interface_layers(config, stack_count, thickness, spacing))
-    return _fuse(boards)
+        section_depth = 0.0 if config.kind is BoardKind.FULL else _EPSILON
+        z_bottom = thickness + config.interface_separation
+        pieces.extend(
+            _interface_layer(stacked, thickness - section_depth, config.interface_thickness).translate(
+                (0.0, 0.0, i * spacing + z_bottom)
+            )
+            for i, stacked in enumerate(stack[:-1])
+        )
+    return _fuse(pieces)
+
+
+def _stack_board_is_flipped(kind: BoardKind, index: int) -> bool:
+    if kind is BoardKind.FULL:
+        return True
+    return index % 2 == 1
 
 
 def _adjusted_interface_thickness(config: GridConfig) -> float:
@@ -2472,25 +2789,18 @@ def _adjusted_interface_thickness(config: GridConfig) -> float:
     return 0.0
 
 
-def _interface_layers(config: GridConfig, stack_count: int, thickness: float, spacing: float) -> list[Shape]:
-    layer = _projection_layer(config, config.interface_thickness)
-    return [layer.translate((0.0, 0.0, i * spacing + thickness + config.interface_separation)) for i in range(stack_count - 1)]
+def _interface_layer(board: Shape, section_z: float, thickness: float) -> Shape:
+    """Extrude the board's XY section at ``section_z`` up from z=0 by ``thickness``.
 
+    Mirrors QuackWorks interfaceLayer/interfaceLayer2D: ``projection(cut=true)`` of the board face
+    that the layer touches (Full: the face itself; Lite/Heavy: 0.01 inside the face), so it keeps
+    the face wall width, corner blocks, chamfers and screw holes.
+    """
 
-def _projection_layer(config: GridConfig, thickness: float) -> Shape:
-    footprint_layers: tuple[ProfileLayer, ...] = ((0.0, _max_profile_offset(), _corner_offset()), (thickness, _max_profile_offset(), _corner_offset()))
-    return _projection_lattice(config, footprint_layers)
-
-
-def _projection_lattice(config: GridConfig, layers: Sequence[ProfileLayer]) -> Shape:
-    tile = _tile_frame(config.tile_size, layers)
-    pieces: list[Shape] = []
-    x0 = -((config.board_width - 1) * config.tile_size) / 2.0
-    y0 = -((config.board_height - 1) * config.tile_size) / 2.0
-    for ix in range(config.board_width):
-        for iy in range(config.board_height):
-            pieces.append(tile.translate((x0 + ix * config.tile_size, y0 + iy * config.tile_size, 0.0)))
-    return _fuse(pieces)
+    below = cast(Shape, board.split(bd.Plane.XY.offset(section_z), keep=bd.Keep.BOTTOM))
+    faces = [face for face in below.faces() if abs(face.center().Z - section_z) < 1e-6 and face.normal_at().Z > 0.5]
+    layers = [cast(Shape, bd.extrude(face.translate((0.0, 0.0, -section_z)), amount=thickness)) for face in faces]
+    return _fuse(layers)
 
 
 def _fill_complete_tiles(config: GridConfig) -> Shape:
@@ -2581,36 +2891,33 @@ def _placed_tile(
 
 
 def _fill_available_space(config: GridConfig) -> Shape:
-    width_cells = math.ceil(config.space_width / config.tile_size)
-    depth_cells = math.ceil(config.space_depth / config.tile_size)
-    tile_widths = _tile_runs(width_cells, config.max_tile_width)
-    tile_depths = _tile_runs(depth_cells, config.max_tile_depth)
-    return _place_partitioned_tiles(config, tile_widths, tile_depths)
-
-
-def _tile_runs(total_cells: int, max_cells: int) -> tuple[int, ...]:
-    full_count, remainder = divmod(total_cells, max_cells)
-    full_runs = (max_cells,) * full_count
-    if remainder == 0:
-        return full_runs
-    return (*full_runs, remainder)
-
-
-def _place_partitioned_tiles(config: GridConfig, tile_widths: Sequence[int], tile_depths: Sequence[int]) -> Shape:
-    base_tiles: dict[tuple[int, int], Shape] = {}
+    """QuackWorks FillSpaceClipOneSide: max-size boards on a spaced grid, clipped to the space in mm."""
+    board_width = config.max_tile_width * config.tile_size
+    board_depth = config.max_tile_depth * config.tile_size
+    full_cols, cols = _clipped_board_counts(config.space_width, board_width)
+    full_rows, rows = _clipped_board_counts(config.space_depth, board_depth)
+    clip_width = config.space_width + full_cols * config.tile_spacing
+    clip_depth = config.space_depth + full_rows * config.tile_spacing
+    board = _base_tile(config, config.max_tile_width, config.max_tile_depth, {})
+    board_box = board.bounding_box()
+    z_min, z_height = float(board_box.min.Z) - 1.0, float(board_box.size.Z) + 2.0
     pieces: list[Shape] = []
-    x = 0.0
-    for width in tile_widths:
-        y = 0.0
-        for depth in tile_depths:
-            pieces.append(
-                _base_tile(config, width, depth, base_tiles).translate(
-                    (x + width * config.tile_size / 2.0, y + depth * config.tile_size / 2.0, 0.0)
-                )
-            )
-            y += depth * config.tile_size + config.tile_spacing
-        x += width * config.tile_size + config.tile_spacing
+    for col in range(cols):
+        x = col * (board_width + config.tile_spacing)
+        for row in range(rows):
+            y = row * (board_depth + config.tile_spacing)
+            piece = board.translate((x + board_width / 2.0, y + board_depth / 2.0, 0.0))
+            if x + board_width > clip_width + _EPSILON or y + board_depth > clip_depth + _EPSILON:
+                clip = bd.Box(clip_width, clip_depth, z_height, align=(bd.Align.MIN, bd.Align.MIN, bd.Align.MIN))
+                piece = cast(Shape, piece & clip.translate((0.0, 0.0, z_min)))
+            pieces.append(piece)
     return _compound(pieces)
+
+
+def _clipped_board_counts(space: float, board_size: float) -> tuple[int, int]:
+    full = math.floor(space / board_size)
+    remainder = space - full * board_size
+    return full, full + (1 if remainder > _EPSILON else 0)
 
 
 def _base_tile(
@@ -2661,49 +2968,192 @@ def _openconnect_head_profile(config: OpenConnectHeadConfig, *, top: bool) -> tu
 
 
 def _openconnect_lock_tools(config: OpenConnectHeadConfig) -> Shape:
+    """Lock-relief notches from `openconnect_lock` (openconnect_lib.scad:304-312).
+
+    Each notch is the BOSL2 45-degree trapezoid (tip `nub_tip_height`, mouth
+    tip + 2 * depth) with r=`nub_fillet` tip fillets and flared mouth corners.
+    It spans the bottom and middle sections. The left (-X) notch is sheared
+    inward along the middle chamfer (`nub_taperin`); the right notch is straight.
+    """
+
     y = config.large_rect_width / 2.0 - config.nub_to_top_distance + config.back_pos_offset
-    tools = (
-        bd.Box(config.nub_depth * 2.0, config.nub_tip_height, config.total_height + 2.0 * _EPSILON).translate(
-            (-config.large_rect_width / 2.0, y, config.total_height / 2.0)
-        ),
-        bd.Box(config.nub_depth * 2.0, config.nub_tip_height, config.total_height + 2.0 * _EPSILON).translate(
-            (config.large_rect_width / 2.0, y, config.total_height / 2.0)
-        ),
-    )
-    return _fuse(tuple(cast(Shape, tool) for tool in tools))
+    edge_x = config.large_rect_width / 2.0 + _SCAD_EPSILON
+    profile = _openconnect_lock_profile(config)
+    left_profile = profile.translate((-edge_x, y, 0.0))
+    right_profile = profile.mirror(bd.Plane.YZ).translate((edge_x, y, 0.0))
+    taper = config.middle_height - config.nub_depth
+
+    def notch(face: bd.Face, shear_x: float) -> Shape:
+        bottom = bd.Solid.extrude(face.translate((0.0, 0.0, -_EPSILON)), (0.0, 0.0, config.bottom_height + _EPSILON))
+        middle = bd.Solid.extrude(face.translate((0.0, 0.0, config.bottom_height)), (shear_x, 0.0, config.middle_height))
+        return cast(Shape, bottom.fuse(middle))
+
+    return _fuse((notch(left_profile, taper), notch(right_profile, 0.0)))
 
 
-def _subtract_connector_slot(shape: Shape, config: ConnectorSlotConfig, top_z: float) -> Shape:
-    coin = bd.Cylinder(config.coin_slot_radius, config.coin_slot_thickness).rotate(bd.Axis.X, 90.0).translate(
-        (0.0, 0.0, top_z - config.coin_slot_height)
+def _openconnect_lock_profile(config: OpenConnectHeadConfig) -> bd.Face:
+    """Lock-relief profile with the mouth on x=0 and the tip at x=nub_depth."""
+
+    depth = config.nub_depth
+    fillet = config.nub_fillet
+    tip = config.nub_tip_height / 2.0
+    mouth = tip + depth
+    tangent = fillet * math.tan(math.radians(22.5))
+    diagonal = tangent / math.sqrt(2.0)
+    with bd.BuildSketch() as sketch:
+        bd.Polygon((0.0, -mouth), (depth, -tip), (depth, tip), (0.0, mouth), align=None)
+        bd.fillet(sketch.vertices().filter_by(lambda vertex: vertex.X > depth / 2.0), fillet)
+        for sign in (1.0, -1.0):
+            with bd.BuildSketch() as flare:
+                bd.Polygon(
+                    (0.0, sign * mouth),
+                    (0.0, sign * (mouth + tangent)),
+                    (diagonal, sign * (mouth - diagonal)),
+                    align=None,
+                )
+                with bd.Locations((fillet, sign * (mouth + tangent))):
+                    bd.Circle(fillet, mode=bd.Mode.SUBTRACT)
+            bd.add(flare.sketch)
+    faces = sketch.sketch.faces()
+    if len(faces) != 1:
+        raise ValueError("openConnect lock relief profile must be a single face")
+    return faces[0]
+
+
+def _multiconnect_head_dimple() -> Shape:
+    """Dimple opening on the R10 (z=0) face, apex inward, per the official round.step."""
+
+    slope = (_MULTICONNECT_HEAD_DIMPLE_RADIUS - _MULTICONNECT_HEAD_DIMPLE_TIP_RADIUS) / _MULTICONNECT_HEAD_DIMPLE_DEPTH
+    cone = bd.Cone(
+        _MULTICONNECT_HEAD_DIMPLE_RADIUS + slope * _EPSILON,
+        _MULTICONNECT_HEAD_DIMPLE_TIP_RADIUS,
+        _MULTICONNECT_HEAD_DIMPLE_DEPTH + _EPSILON,
+        align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN),
     )
-    flat = bd.Box(
-        config.flat_slot_width,
-        config.coin_slot_thickness,
-        config.flat_slot_height - config.coin_slot_height + config.flat_slot_height_offset,
-    ).translate(
-        (
-            0.0,
-            -config.coin_slot_thickness / 2.0,
-            top_z - config.flat_slot_height / 2.0 - config.flat_slot_height_offset / 2.0,
+    return cast(Shape, cone.translate((0.0, 0.0, -_EPSILON)))
+
+
+def _coin_slot_tool(config: ConnectorSlotConfig, *, thickness_axis: bd.Axis) -> Shape:
+    """Coin-slot cylinder whose arc is tangent to z=coin_slot_height above the z=0 face."""
+
+    radius = config.coin_slot_radius
+    rotation = (0.0, 90.0, 0.0) if thickness_axis == bd.Axis.X else (90.0, 0.0, 0.0)
+    return cast(
+        Shape,
+        bd.Cylinder(radius, config.coin_slot_thickness, rotation=rotation).translate(
+            (0.0, 0.0, config.coin_slot_height - radius)
+        ),
+    )
+
+
+def _openconnect_screw_slot_tool(config: ConnectorSlotConfig) -> Shape:
+    """openConnect screw slot tools from openconnect_lib.scad:530-543 in the head frame.
+
+    The coin slot runs along Y (thickness along X) with a front channel to the
+    head edge; the flat-blade prismoid narrows from start to end thickness and
+    reaches `flat_slot_height` inside the threads.
+    """
+
+    coin = _coin_slot_tool(config, thickness_axis=bd.Axis.X)
+    radius = config.coin_slot_radius
+    channel = bd.Box(config.coin_slot_thickness, config.coin_slot_width, radius).translate(
+        (0.0, -config.coin_slot_width / 2.0, config.coin_slot_height - radius / 2.0)
+    )
+    flat_bottom = config.coin_slot_height - config.flat_slot_height_offset
+    start = config.flat_slot_start_thickness / 2.0
+    end = config.flat_slot_end_thickness / 2.0
+    with bd.BuildSketch(bd.Plane.XZ) as flat_profile:
+        bd.Polygon(
+            (-start, flat_bottom),
+            (start, flat_bottom),
+            (end, config.flat_slot_height),
+            (-end, config.flat_slot_height),
+            align=None,
         )
+    flat = bd.extrude(flat_profile.sketch, amount=config.flat_slot_width / 2.0, both=True)
+    return _fuse((coin, cast(Shape, channel), cast(Shape, flat)))
+
+
+def _openconnect_overhang_cone(config: OpenConnectHeadConfig) -> Shape:
+    """Overhang cone intersected with the unfolded screw head (openconnect_lib.scad:527-528)."""
+
+    height = config.total_height
+    top_radius = _OPENCONNECT_SCREW_OVERHANG_DIAMETER / 2.0
+    cone = bd.Cone(top_radius + height, top_radius, height, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))
+    offset_x, offset_y = _OPENCONNECT_SCREW_OVERHANG_OFFSET
+    return cast(Shape, cone.translate((offset_x, offset_y, 0.0)))
+
+
+def _openconnect_fold(screw: Shape, fold_position: float, body_length: float, tip_z: float) -> Shape:
+    """Port of `conditional_fold` (opengrid_base.scad:192-219) for the openConnect screw.
+
+    Input is the screw in the head frame (outer face z=0, thread tip at `tip_z`).
+    The output is SCAD's print layout, with `body_length` (head + threads height)
+    as the SCAD body thickness: the back piece (y >= -fold_position) lies on its
+    cut face with the outer face at y=body_length; the front thread sliver, minus
+    the slice-off, lies mirrored past the gap at y < 0; a gap_height-thick hinge,
+    cut from the thread-tip section, bridges the gap.
+    """
+
+    gap_width = _OPENCONNECT_FOLD_GAP_WIDTH
+    gap_height = _OPENCONNECT_FOLD_GAP_HEIGHT
+    sliceoff = gap_width / 2.0
+    span = 100.0
+    back_mask = bd.Box(span, span, span, align=(bd.Align.CENTER, bd.Align.MIN, bd.Align.CENTER)).translate(
+        (0.0, -fold_position, 0.0)
     )
-    return cast(Shape, shape - _fuse((cast(Shape, coin), cast(Shape, flat))))
+    front_mask = bd.Box(span, span, span, align=(bd.Align.CENTER, bd.Align.MAX, bd.Align.CENTER)).translate(
+        (0.0, -fold_position - sliceoff, 0.0)
+    )
+    back = cast(Shape, screw & back_mask).rotate(bd.Axis.X, 90.0).translate((0.0, body_length, fold_position))
+    front = (
+        cast(Shape, screw & front_mask)
+        .rotate(bd.Axis.X, -90.0)
+        .translate((0.0, -body_length - gap_width + _SCAD_EPSILON, -fold_position - sliceoff))
+    )
+    strip = bd.Plane.XY.offset(tip_z - _EPSILON) * bd.Rectangle(span, gap_height).face().translate(
+        (0.0, -fold_position + gap_height / 2.0, 0.0)
+    )
+    hinges = [
+        bd.Solid.extrude(
+            face.translate((0.0, 0.0, _EPSILON - tip_z)).rotate(bd.Axis.X, 90.0).translate(
+                (0.0, -gap_width - _EPSILON, fold_position)
+            ),
+            (0.0, gap_width + 3.0 * _EPSILON, 0.0),
+        )
+        for face in cast(Shape, screw & strip).faces()
+    ]
+    return _fuse((back, front, *hinges))
+
+
+def _opengrid_snap_thread_hole(config: OpenGridSnapConfig) -> Shape:
+    # Source attach(TOP, BOTTOM, inside=true, shiftout=EPS/2) snap_threads(thickness + EPS) inside diff():
+    # a "remove" tool whose thread frame is turned 180 deg about Y with frame z=0 at the snap top.
+    # reverse_threads_entryside wraps it in up(thickness) yrot(180), which undoes that flip.
+    thickness = config.snap_body.thickness
+    threads = build_snap_threads(replace(config.threads, height=thickness + _EPSILON))
+    if config.reverse_threads_entryside:
+        placed = threads.translate((0.0, 0.0, -_EPSILON / 2.0))
+    else:
+        placed = threads.rotate(bd.Axis.Y, 180.0).translate((0.0, 0.0, thickness + _EPSILON / 2.0))
+    return cast(Shape, placed.translate((config.center_offset[0], config.center_offset[1], 0.0)))
 
 
 def _opengrid_snap_attachment(config: OpenGridSnapConfig) -> Shape | None:
-    if config.kind is OpenGridSnapKind.BASIC_THREADS:
-        if config.disable_threads:
-            return None
-        threads = build_snap_threads(config.threads)
-        if config.reverse_threads_entryside:
-            return cast(Shape, threads.rotate(bd.Axis.X, 180.0).translate((0.0, 0.0, config.threads.height)))
-        return threads
     if config.kind is OpenGridSnapKind.OPENCONNECT:
-        return build_openconnect_head(config.openconnect_head)
+        return _flip_snap_head(build_openconnect_head(config.openconnect_head), config.openconnect_head.total_height)
     if config.kind is OpenGridSnapKind.MULTICONNECT:
-        return build_multiconnect_head(config.multiconnect_head)
+        return _flip_snap_head(build_multiconnect_head(config.multiconnect_head), config.multiconnect_head.total_height)
     return None
+
+
+def _flip_snap_head(head: Shape, height: float) -> Shape:
+    # Source attach(TOP, TOP): the small face sits on the snap and the large face is outermost.
+    # build_opengrid_snap sinks attachments by _EPSILON. Instead of sinking the head (which loses height),
+    # extend its small face down by _EPSILON into the snap so the fuse yields one solid at full height.
+    flipped = head.rotate(bd.Axis.Y, 180.0).translate((0.0, 0.0, height))
+    seat = bd.extrude(flipped.faces().sort_by(bd.Axis.Z)[0], amount=_EPSILON, dir=(0.0, 0.0, -1.0))
+    return cast(Shape, (flipped + seat).translate((0.0, 0.0, _EPSILON)))
 
 
 def _engrave_text(shape: Shape, config: TextEngravingConfig, top_z: float) -> Shape:
