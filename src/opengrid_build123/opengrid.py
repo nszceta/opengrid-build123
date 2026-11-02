@@ -2395,7 +2395,14 @@ def _scaled_snap_thread_profile(pitch: float) -> tuple[Point2D, ...]:
 
 
 def export_grid(config: GridConfig, path: str | Path) -> None:
-    bd.export_stl(build_open_grid(config), str(path))
+    """Export the board as STEP (`.step`/`.stp`) or STL (`.stl`), chosen by file extension."""
+    suffix = Path(path).suffix.lower()
+    if suffix in {".step", ".stp"}:
+        bd.export_step(build_open_grid(config), str(path))
+    elif suffix == ".stl":
+        bd.export_stl(build_open_grid(config), str(path))
+    else:
+        raise ValueError(f"unsupported export extension {suffix!r}; use .step, .stp, or .stl")
 
 
 def _replace_grid(
@@ -3249,7 +3256,10 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Override screw hole geometry with a named fastener; default keeps the built-in 4.1/7.2 countersink",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.output.suffix.lower() not in {".step", ".stp", ".stl"}:
+        parser.error("--output must end in .step, .stp, or .stl")
+    return args
 
 
 def main() -> None:

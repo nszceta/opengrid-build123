@@ -140,23 +140,28 @@ board:
   screw_custom_positions: "011110"
 
   # Purpose: Through screw hole diameter in millimeters.
-  # Recommended: 4.1 mm for common #8/M4 clearance-style holes.
+  # Recommended: 4.1 mm (openGrid/QuackWorks default). Real #8 or M4 clearance
+  # is 4.5 mm; use screw_preset below for those fasteners.
   screw_diameter: 4.1
 
-  # Purpose: Screw head/counterbore diameter in millimeters.
+  # Purpose: Screw head relief diameter in millimeters (counterbore diameter,
+  # or the countersink's widest diameter).
   # Recommended: match actual fastener head plus printer clearance.
   screw_head_diameter: 7.2
 
-  # Purpose: Distance from top surface to start of screw head relief.
+  # Purpose: Depth of the cylindrical head relief below the top surface. With
+  # countersinking the cone starts below this; without it, this is the full
+  # counterbore depth and must cover the head height.
   # Recommended: 1.0 mm for the default countersunk setup.
   screw_head_inset: 1.0
 
   # Purpose: Use conical countersink instead of cylindrical counterbore.
-  # Recommended: true for flat-head screws; false for pan/socket head screws.
+  # Recommended: true for flat-head screws; false for pan/socket/truss heads
+  # with flat undersides.
   screw_head_is_countersunk: true
 
   # Purpose: Countersink included angle in degrees.
-  # Recommended: 90.0 for common metric/wood countersunk screws.
+  # Recommended: 90.0 for metric (ISO) flat heads; 82.0 for US (#6/#8/#10).
   screw_head_countersunk_degree: 90.0
 
   # Purpose: Optional named fastener that overrides screw_diameter and all

@@ -7,7 +7,7 @@ A build123d conversion of the parametric openGrid board generator from the refer
 Implemented:
 
 - Full, Lite, and Heavy openGrid boards, including fill-space modes
-- Parametric board width/height, tile size, stacking, chamfers, screw mounting, connector slots, and Lite adhesive backing
+- Parametric board width/height, tile size, stacking, chamfers, screw mounting with optional #8/M4 fastener presets, connector slots, and Lite adhesive backing
 - Adjacent-grid connector slot/delete-tool and positive connector primitives
 - Snap thread, snap body, and self-expanding snap primitives
 - Assembled snap products with bare, basic-thread, self-expanding, openConnect, or Multiconnect attachments
@@ -34,11 +34,13 @@ dependencies = [
 uv sync
 ```
 
-## Export an STL
+## Export an STL or STEP file
 
 ```bash
 uv run opengrid-build123 --kind Full --width 2 --height 2 --output opengrid_full_2x2.stl
 ```
+
+The `--output` extension picks the format: `.stl` for a mesh, `.step` or `.stp` for a STEP solid. Any other extension is an error. `export_grid()` in Python follows the same rule.
 
 Supported `--kind` values:
 
@@ -59,7 +61,22 @@ uv run opengrid-build123 --kind Full --screw-mounting Everywhere --screw-preset 
 | `M4 Pan Head` | 4.5 | counterbore Ø8.4 × 3.3 deep |
 | `M4 Flat Head` | 4.5 | 90° countersink to Ø8.8, 0.5 recess |
 
-In Python, `apply_screw_preset(config, ScrewPreset.NUMBER_8_PAN_HEAD)` returns a copy of the config with only the screw hole fields replaced. In `examples/config.yaml`, set `board.screw_preset`.
+In Python, `apply_screw_preset(config, ScrewPreset.NUMBER_8_PAN_HEAD)` returns a copy of the config with only `screw_diameter` and the `screw_head_*` fields replaced. Placement, board kind, and every other field are kept, and further tweaks go through `dataclasses.replace`. In `examples/config.yaml`, set `board.screw_preset` (`null` keeps the explicit `screw_*` values).
+
+```python
+from dataclasses import replace
+
+from opengrid_build123 import BoardKind, GridConfig, ScrewMounting, ScrewPreset, apply_screw_preset, build_open_grid
+
+config = apply_screw_preset(
+    GridConfig(kind=BoardKind.FULL, board_width=3, board_height=3, screw_mounting=ScrewMounting.EVERYWHERE),
+    ScrewPreset.NUMBER_8_PAN_HEAD,
+)
+config = replace(config, screw_head_diameter=8.6)  # optional: looser head fit
+board = build_open_grid(config)
+```
+
+Preset sizes are normal-fit clearance holes plus head reliefs taken from the maximum head sizes in ASME B18.6.3 (#8) and ISO 7045/7046 (M4). On Full boards, the board corner next to each screw reaches only r 4.22 at the top face. The `#8 Pan Head` counterbore (r 4.15) stays inside it. The flat-head countersinks (r 4.3/4.4) and any head relief wider than Ø8.44 notch the snap opening edge by up to about 0.2 mm. On 4.0 mm Lite boards, a pan-head counterbore leaves 1.0 mm (#8) or 0.7 mm (M4) under the head.
 
 ## Export STEP files and visual verification galleries
 
@@ -131,6 +148,7 @@ Current test coverage checks:
 - Full/Lite/Heavy board dimensions
 - Lite adhesive backing thickness
 - Subtractive options removing material without changing outer dimensions
+- Screw counterbore/countersink geometry, including the `#8 Pan Head` preset's flat-bottom counterbore
 - Overall corner chamfers cutting through the full tile height
 - Connector snap slots centered in side height
 - Stacked interface layer spacing
