@@ -34,6 +34,8 @@ from opengrid_build123.opengrid import (
     ConnectorSlotDeleteToolConfig,
     GridConfig,
     ScrewMounting,
+    ScrewPreset,
+    apply_screw_preset,
     StackingMethod,
     ThreadType,
     MulticonnectScrewConfig,
@@ -240,7 +242,7 @@ def test_example_config_exhaustively_lists_config_dataclass_fields() -> None:
     }
 
     expected_board_fields = {field.name for field in dataclass_fields(GridConfig)} - {"connector_slot_delete_tool"}
-    assert set(_mapping_section(config, "board")) == expected_board_fields
+    assert set(_mapping_section(config, "board")) == expected_board_fields | {"screw_preset"}
     assert set(_mapping_section(config, "connector_slot_delete_tool")) == {
         field.name for field in dataclass_fields(ConnectorSlotDeleteToolConfig)
     }
@@ -1443,6 +1445,20 @@ def test_countersink_meets_counterbore_without_lip() -> None:
     assert not board.is_inside((14.0 + 3.5, 14.0, 5.805))
     assert not board.is_inside((14.0 + 2.1, 14.0, 4.4))
     assert board.is_inside((14.0 + 2.1, 14.0, 4.1))
+
+
+def test_pan_head_preset_cuts_flat_counterbore_and_keeps_other_fields() -> None:
+    base = GridConfig(kind=BoardKind.FULL, board_width=3, board_height=3, chamfers=ChamferMode.NONE, connector_holes=False, screw_mounting=ScrewMounting.CORNERS)
+    config = apply_screw_preset(base, ScrewPreset.NUMBER_8_PAN_HEAD)
+
+    assert replace(config, screw_diameter=base.screw_diameter, screw_head_diameter=base.screw_head_diameter, screw_head_inset=base.screw_head_inset, screw_head_is_countersunk=base.screw_head_is_countersunk, screw_head_countersunk_degree=base.screw_head_countersunk_degree) == base
+    board = build_open_grid(config)
+    # #8 clearance r 2.25; counterbore r 4.15 with a flat floor at z 3.8 (3.0 deep), no cone.
+    assert not board.is_inside((14.0 + 2.2, 14.0, 1.0))
+    assert board.is_inside((14.0 + 2.3, 14.0, 3.75))
+    assert not board.is_inside((14.0 + 4.1, 14.0, 3.85))
+    assert board.is_inside((14.0 + 4.2, 14.0, 6.0))
+
 
 
 def test_heavy_screw_heads_are_on_both_outer_faces() -> None:

@@ -46,6 +46,21 @@ Supported `--kind` values:
 - `Lite`
 - `Heavy`
 
+Screw holes default to a 4.1 mm hole with a 7.2 mm 90° countersink. Add `--screw-preset` to use a named fastener instead:
+
+```bash
+uv run opengrid-build123 --kind Full --screw-mounting Everywhere --screw-preset "#8 Pan Head" --output full_8pan.stl
+```
+
+| Preset | Hole | Head relief |
+| --- | --- | --- |
+| `#8 Pan Head` | 4.5 | counterbore Ø8.3 × 3.0 deep |
+| `#8 Flat Head` | 4.5 | 82° countersink to Ø8.6, 0.5 recess |
+| `M4 Pan Head` | 4.5 | counterbore Ø8.4 × 3.3 deep |
+| `M4 Flat Head` | 4.5 | 90° countersink to Ø8.8, 0.5 recess |
+
+In Python, `apply_screw_preset(config, ScrewPreset.NUMBER_8_PAN_HEAD)` returns a copy of the config with only the screw hole fields replaced. In `examples/config.yaml`, set `board.screw_preset`.
+
 ## Export STEP files and visual verification galleries
 
 The unified example reads `examples/config.yaml` by default. Edit that file to configure boards, adjacent-grid connector objects, every Multiconnect part kind, snap primitives, assembled snap products, snap-thread-backed screws, STEP output, SVG verification, and optional OCP viewer display.

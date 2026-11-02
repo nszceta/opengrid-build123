@@ -36,6 +36,8 @@ __all__ = [
     "OpenGridSnapConfig",
     "GridConfig",
     "ScrewMounting",
+    "ScrewPreset",
+    "apply_screw_preset",
     "StackingMethod",
     "build_fill_space",
     "build_openconnect_head",
@@ -158,6 +160,19 @@ class ScrewMounting(StrEnum):
     BY_ROW_AND_COLUMN = "By Row and Column"
     CUSTOM = "Custom"
     NONE = "None"
+
+
+class ScrewPreset(StrEnum):
+    """Named fastener geometries; apply with `apply_screw_preset`.
+
+    Pan heads have flat undersides and get a cylindrical counterbore; flat heads get a countersink.
+    """
+
+    NUMBER_8_PAN_HEAD = "#8 Pan Head"
+    NUMBER_8_FLAT_HEAD = "#8 Flat Head"
+    M4_PAN_HEAD = "M4 Pan Head"
+    M4_FLAT_HEAD = "M4 Flat Head"
+
 
 
 class StackingMethod(StrEnum):
@@ -802,6 +817,46 @@ class GridConfig:
         if self.max_tile_width < 1 or self.max_tile_depth < 1:
             raise ValueError("max tile dimensions must be positive")
         self.connector_slot_delete_tool.validate()
+
+
+@dataclass(frozen=True, slots=True)
+class _ScrewGeometry:
+    diameter: float
+    head_diameter: float
+    head_inset: float
+    is_countersunk: bool
+    countersunk_degree: float = 90.0
+
+
+# Through hole = normal-fit clearance (#8: 0.177 in; M4: ISO 273 medium 4.5).
+# Pan heads: counterbore = max head diameter + ~0.4, depth = max head height rounded up
+# (#8 ASME B18.6.3: 7.90 x 2.87; M4 ISO 7045: 8.0 x 3.1).
+# Flat heads: countersink to max head diameter + clearance at the standard angle
+# (#8 ASME B18.6.3 82 deg, 8.43; M4 ISO 7046 90 deg, 8.4), recessed 0.5 below the face.
+_SCREW_PRESETS: dict[ScrewPreset, _ScrewGeometry] = {
+    ScrewPreset.NUMBER_8_PAN_HEAD: _ScrewGeometry(4.5, 8.3, 3.0, is_countersunk=False),
+    ScrewPreset.NUMBER_8_FLAT_HEAD: _ScrewGeometry(4.5, 8.6, 0.5, is_countersunk=True, countersunk_degree=82.0),
+    ScrewPreset.M4_PAN_HEAD: _ScrewGeometry(4.5, 8.4, 3.3, is_countersunk=False),
+    ScrewPreset.M4_FLAT_HEAD: _ScrewGeometry(4.5, 8.8, 0.5, is_countersunk=True, countersunk_degree=90.0),
+}
+
+
+def apply_screw_preset(config: GridConfig, preset: ScrewPreset) -> GridConfig:
+    """Return `config` with its screw hole geometry replaced by `preset`.
+
+    Only `screw_diameter`, `screw_head_*` change; placement and every other field are kept.
+    Fine-tune afterwards with `dataclasses.replace`.
+    """
+
+    geometry = _SCREW_PRESETS[preset]
+    return replace(
+        config,
+        screw_diameter=geometry.diameter,
+        screw_head_diameter=geometry.head_diameter,
+        screw_head_inset=geometry.head_inset,
+        screw_head_is_countersunk=geometry.is_countersunk,
+        screw_head_countersunk_degree=geometry.countersunk_degree,
+    )
 
 
 def open_grid(
@@ -3188,6 +3243,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--no-connectors", action="store_true")
     parser.add_argument("--screw-mounting", choices=[mode.value for mode in ScrewMounting], default=ScrewMounting.CORNERS.value)
     parser.add_argument("--chamfers", choices=[mode.value for mode in ChamferMode], default=ChamferMode.CORNERS.value)
+    parser.add_argument(
+        "--screw-preset",
+        choices=[preset.value for preset in ScrewPreset],
+        default=None,
+        help="Override screw hole geometry with a named fastener; default keeps the built-in 4.1/7.2 countersink",
+    )
     return parser.parse_args()
 
 
@@ -3201,6 +3262,8 @@ def main() -> None:
         screw_mounting=ScrewMounting(args.screw_mounting),
         chamfers=ChamferMode(args.chamfers),
     )
+    if args.screw_preset is not None:
+        config = apply_screw_preset(config, ScrewPreset(args.screw_preset))
     export_grid(config, args.output)
 
 

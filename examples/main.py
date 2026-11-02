@@ -34,6 +34,8 @@ from opengrid_build123 import (
     OpenGridSnapKind,
     GridConfig,
     ScrewMounting,
+    ScrewPreset,
+    apply_screw_preset,
     StackingMethod,
     ThreadType,
     MulticonnectScrewConfig,
@@ -540,7 +542,7 @@ def _opengrid_snap_config(
 
 def _grid_config(config: dict[str, Any], slot_delete_tool: ConnectorSlotDeleteToolConfig) -> GridConfig:
     board = _section(config, "board")
-    return GridConfig(
+    grid = GridConfig(
         kind=BoardKind(_as_str(board, "kind")),
         board_width=_as_int(board, "board_width"),
         board_height=_as_int(board, "board_height"),
@@ -582,6 +584,12 @@ def _grid_config(config: dict[str, Any], slot_delete_tool: ConnectorSlotDeleteTo
         max_tile_depth=_as_int(board, "max_tile_depth"),
         tile_spacing=_as_float(board, "tile_spacing"),
     )
+    preset = board.get("screw_preset")
+    if preset is None:
+        return grid
+    if not isinstance(preset, str) or preset not in {p.value for p in ScrewPreset}:
+        raise SystemExit(f"Config key `screw_preset` must be null or one of: {', '.join(p.value for p in ScrewPreset)}")
+    return apply_screw_preset(grid, ScrewPreset(preset))
 
 
 

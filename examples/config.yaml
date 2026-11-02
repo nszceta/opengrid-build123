@@ -159,6 +159,12 @@ board:
   # Recommended: 90.0 for common metric/wood countersunk screws.
   screw_head_countersunk_degree: 90.0
 
+  # Purpose: Optional named fastener that overrides screw_diameter and all
+  # screw_head_* values above. null keeps the values above unchanged.
+  # Options: null, "#8 Pan Head", "#8 Flat Head", "M4 Pan Head", "M4 Flat Head".
+  # Pan heads (flat underside) get a counterbore; flat heads get a countersink.
+  screw_preset: null
+
   # Purpose: Add a thin backing plate under Lite boards for adhesive tape.
   # Recommended: false for Full/Heavy; true for adhesive-mounted Lite boards.
   add_adhesive_base: false
