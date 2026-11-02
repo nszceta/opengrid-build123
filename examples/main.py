@@ -15,6 +15,7 @@ from ocp_vscode.comms import port_check
 from opengrid_build123 import (
     AdjacentGridConnectorConfig,
     BoardKind,
+    BlockingPinSnapConfig,
     ChamferMode,
     ConnectorSlotDeleteToolConfig,
     ConnectorSlotConfig,
@@ -39,8 +40,11 @@ from opengrid_build123 import (
     StackingMethod,
     ThreadType,
     MulticonnectScrewConfig,
+    MulticonnectBlockingScrewConfig,
     TextEngravingConfig,
     TextLabel,
+    build_blocking_pin_snap,
+    build_multiconnect_blocking_screw,
     build_multiconnect_profile,
     build_multiconnect_part,
     build_openconnect_head,
@@ -164,6 +168,25 @@ _MULTICONNECT_SCREW_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
     ("multiconnect_screw_top.svg", (0.0, 0.0, 64.0), (0.0, 1.0, 0.0)),
 )
 
+_BLOCKING_PIN_SNAP_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("blocking_pin_snap_iso.svg", (42.0, -56.0, 36.0), (0.0, 0.0, 1.0)),
+    ("blocking_pin_snap_front.svg", (0.0, -72.0, 7.0), (0.0, 0.0, 1.0)),
+    ("blocking_pin_snap_top.svg", (0.0, 0.0, 72.0), (0.0, 1.0, 0.0)),
+)
+
+_MULTICONNECT_BLOCKING_SCREW_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("multiconnect_blocking_screw_iso.svg", (42.0, -56.0, 36.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_blocking_screw_front.svg", (0.0, -72.0, 9.0), (0.0, 0.0, 1.0)),
+    ("multiconnect_blocking_screw_top.svg", (0.0, 0.0, 72.0), (0.0, 1.0, 0.0)),
+)
+
+# Section of the seated-and-locked assembly in a 1x1 Heavy board, cut at x=0 and seen from +x.
+_BLOCKING_PIN_ASSEMBLY_VERIFICATION_VIEWS: tuple[_VerificationView, ...] = (
+    ("blocking_pin_assembly_section.svg", (64.0, 0.0, 7.0), (0.0, 0.0, 1.0)),
+    ("blocking_pin_assembly_iso.svg", (48.0, -40.0, 36.0), (0.0, 0.0, 1.0)),
+    ("blocking_pin_assembly_top.svg", (0.0, 0.0, 72.0), (0.0, 1.0, 0.0)),
+)
+
 class _DisplayShape(Protocol):
     def translate(self, vector: tuple[float, float, float]) -> object: ...
 _VerificationVariant = tuple[str, _DisplayShape, tuple[_VerificationView, ...]]
@@ -282,12 +305,17 @@ def _verification_config(config: dict[str, Any]) -> _VerificationConfig:
     )
 
 
-def _prepare_output_dir(path: Path) -> None:
-    if path.exists():
-        if not path.is_dir():
-            raise SystemExit(f"Output path {path} exists but is not a directory")
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=True)
+def _prepare_output_dir(output_dir: Path, verification_dir: Path) -> None:
+    """Create `output_dir` and clear only the regenerated verification galleries.
+
+    STEP files are overwritten in place; anything else in `output_dir` (simulation
+    results, user exports) is left alone.
+    """
+    if output_dir.exists() and not output_dir.is_dir():
+        raise SystemExit(f"Output path {output_dir} exists but is not a directory")
+    if verification_dir.exists():
+        shutil.rmtree(verification_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _slot_delete_tool_config(config: dict[str, Any]) -> ConnectorSlotDeleteToolConfig:
@@ -516,6 +544,72 @@ def _multiconnect_screw_config(
     return MulticonnectScrewConfig(threads=threads, head=head, connector_slot=connector_slot, text=text)
 
 
+def _blocking_pin_snap_config(
+    snap_body: SnapBodyConfig,
+    threads: SnapThreadConfig,
+    config: dict[str, Any],
+) -> BlockingPinSnapConfig:
+    snap = _section(config, "blocking_pin_snap")
+    return BlockingPinSnapConfig(
+        snap_body=snap_body,
+        threads=replace(threads, clearance=_as_float(snap, "thread_clearance")),
+        board_thickness=_as_float(snap, "board_thickness"),
+        height=_as_float(snap, "height"),
+        hub_height=_as_float(snap, "hub_height"),
+        web_thickness=_as_float(snap, "web_thickness"),
+        sleeve_outer_radius=_as_float(snap, "sleeve_outer_radius"),
+        leg_thickness=_as_float(snap, "leg_thickness"),
+        leg_width=_as_float(snap, "leg_width"),
+        leg_slot_width=_as_float(snap, "leg_slot_width"),
+        ledge_reach=_as_float(snap, "ledge_reach"),
+        ledge_lead_in_angle=_as_float(snap, "ledge_lead_in_angle"),
+        seat_clearance=_as_float(snap, "seat_clearance"),
+    )
+
+
+def _multiconnect_blocking_screw_config(
+    snap: BlockingPinSnapConfig,
+    head: MulticonnectHeadConfig,
+    connector_slot: ConnectorSlotConfig,
+    text: TextEngravingConfig,
+    config: dict[str, Any],
+) -> MulticonnectBlockingScrewConfig:
+    screw = _section(config, "multiconnect_blocking_screw")
+    return MulticonnectBlockingScrewConfig(
+        snap=snap,
+        head=head,
+        connector_slot=connector_slot,
+        blocking_clearance=_as_float(screw, "blocking_clearance"),
+        text=text,
+    )
+
+
+def _blocking_pin_section(
+    snap_config: BlockingPinSnapConfig,
+    screw_config: MulticonnectBlockingScrewConfig,
+) -> _DisplayShape:
+    """Heavy 1x1 board with the snap seated and the screw locked, cut at x=0 (the x<=0 half is kept)."""
+    board = build_open_grid(
+        GridConfig(
+            kind=BoardKind.HEAVY,
+            board_width=1,
+            board_height=1,
+            chamfers=ChamferMode.NONE,
+            connector_holes=False,
+            screw_mounting=ScrewMounting.NONE,
+        )
+    )
+    seat = snap_config.board_thickness - snap_config.height
+    snap = build_blocking_pin_snap(snap_config).translate((0.0, 0.0, seat))
+    screw = (
+        build_multiconnect_blocking_screw(screw_config)
+        .rotate(bd.Axis.X, 180.0)
+        .translate((0.0, 0.0, seat + snap_config.height + screw_config.head.total_height))
+    )
+    keep = bd.Solid.make_box(100.0, 100.0, 60.0).translate((-100.0, -50.0, -10.0))
+    return cast(_DisplayShape, bd.Compound([cast(Any, part) & keep for part in (board, snap, screw)]))
+
+
 def _opengrid_snap_config(
     snap_body: SnapBodyConfig,
     threads: SnapThreadConfig,
@@ -607,6 +701,8 @@ def _show_objects(
     opengrid_snap: _DisplayShape,
     openconnect_screw: _DisplayShape,
     multiconnect_screw: _DisplayShape,
+    blocking_pin_snap: _DisplayShape,
+    multiconnect_blocking_screw: _DisplayShape,
     viewer: dict[str, Any],
 ) -> None:
     port = _as_optional_port(viewer, "port")
@@ -630,6 +726,8 @@ def _show_objects(
         opengrid_snap.translate(_as_vector(viewer, "opengrid_snap_offset")),
         openconnect_screw.translate(_as_vector(viewer, "openconnect_screw_offset")),
         multiconnect_screw.translate(_as_vector(viewer, "multiconnect_screw_offset")),
+        blocking_pin_snap.translate(_as_vector(viewer, "blocking_pin_snap_offset")),
+        multiconnect_blocking_screw.translate(_as_vector(viewer, "multiconnect_blocking_screw_offset")),
         names=[
             "openGrid board with adjacent-grid connector slots",
             "adjacent-grid connector slot delete tool",
@@ -644,6 +742,8 @@ def _show_objects(
             "assembled openGrid snap",
             "openConnect screw",
             "Multiconnect screw",
+            "blocking-pin snap",
+            "Multiconnect blocking screw",
         ],
         port=port,
         reset_camera=Camera.CENTER,
@@ -753,6 +853,9 @@ def _export_output_verification(
     opengrid_snap: _DisplayShape,
     openconnect_screw: _DisplayShape,
     multiconnect_screw: _DisplayShape,
+    blocking_pin_snap: _DisplayShape,
+    multiconnect_blocking_screw: _DisplayShape,
+    blocking_pin_section: _DisplayShape,
     verification_dir: Path,
 ) -> tuple[Path, ...]:
     return (
@@ -861,6 +964,27 @@ def _export_output_verification(
             gallery_filename="gallery.html",
             views=_MULTICONNECT_SCREW_VERIFICATION_VIEWS,
         ),
+        *_export_shape_verification(
+            blocking_pin_snap,
+            verification_dir / "blocking_pin_snap",
+            title="blocking-pin snap verification",
+            gallery_filename="gallery.html",
+            views=_BLOCKING_PIN_SNAP_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            multiconnect_blocking_screw,
+            verification_dir / "multiconnect_blocking_screw",
+            title="Multiconnect blocking screw verification",
+            gallery_filename="gallery.html",
+            views=_MULTICONNECT_BLOCKING_SCREW_VERIFICATION_VIEWS,
+        ),
+        *_export_shape_verification(
+            blocking_pin_section,
+            verification_dir / "blocking_pin_assembly",
+            title="blocking-pin snap and screw seated in a Heavy board (section at x=0)",
+            gallery_filename="gallery.html",
+            views=_BLOCKING_PIN_ASSEMBLY_VERIFICATION_VIEWS,
+        ),
     )
 
 
@@ -879,6 +1003,9 @@ def _export_variant_output_verification(
     opengrid_snap_config: OpenGridSnapConfig,
     openconnect_screw_config: OpenConnectScrewConfig,
     multiconnect_screw_config: MulticonnectScrewConfig,
+    blocking_pin_snap_config: BlockingPinSnapConfig,
+    multiconnect_blocking_screw_config: MulticonnectBlockingScrewConfig,
+    blocking_pin_section: _DisplayShape,
     verification_dir: Path,
 ) -> tuple[Path, ...]:
     return (
@@ -949,6 +1076,23 @@ def _export_variant_output_verification(
             _multiconnect_screw_verification_variants(multiconnect_screw_config),
             verification_dir / "multiconnect_screw",
             "Multiconnect screw variant verification",
+        ),
+        *_export_component_variant_verification(
+            _blocking_pin_snap_verification_variants(blocking_pin_snap_config),
+            verification_dir / "blocking_pin_snap",
+            "blocking-pin snap variant verification",
+        ),
+        *_export_component_variant_verification(
+            _multiconnect_blocking_screw_verification_variants(multiconnect_blocking_screw_config),
+            verification_dir / "multiconnect_blocking_screw",
+            "Multiconnect blocking screw variant verification",
+        ),
+        *_export_shape_verification(
+            blocking_pin_section,
+            verification_dir / "blocking_pin_assembly",
+            title="blocking-pin snap and screw seated in a Heavy board (section at x=0)",
+            gallery_filename="gallery.html",
+            views=_BLOCKING_PIN_ASSEMBLY_VERIFICATION_VIEWS,
         ),
     )
 
@@ -1199,6 +1343,28 @@ def _multiconnect_screw_verification_variants(config: MulticonnectScrewConfig) -
     )
     return (*top_variants, *thread_variants)
 
+
+def _blocking_pin_snap_verification_variants(config: BlockingPinSnapConfig) -> tuple[_VerificationVariant, ...]:
+    # legs_deflected: the ledge reach pulled in to just clear the lip, the shape the legs take during insertion.
+    deflected = replace(config, ledge_reach=config.snap_body.width / 2.0 + 0.05)
+    return (
+        ("default", build_blocking_pin_snap(config), _BLOCKING_PIN_SNAP_VERIFICATION_VIEWS),
+        ("legs_deflected", build_blocking_pin_snap(deflected), _BLOCKING_PIN_SNAP_VERIFICATION_VIEWS),
+    )
+
+
+def _multiconnect_blocking_screw_verification_variants(
+    config: MulticonnectBlockingScrewConfig,
+) -> tuple[_VerificationVariant, ...]:
+    return tuple(
+        (
+            f"top_{_slug(top_pattern)}",
+            build_multiconnect_blocking_screw(replace(config, head=replace(config.head, top_pattern=top_pattern))),
+            _MULTICONNECT_BLOCKING_SCREW_VERIFICATION_VIEWS,
+        )
+        for top_pattern in ("coin_slot", "dimple", "none")
+    )
+
 def _write_verification_gallery(title: str, svg_paths: list[Path], gallery_path: Path) -> None:
     figures = "\n".join(
         f'<figure><figcaption>{path.name}</figcaption><img src="{path.name}" alt="{path.name}"></figure>'
@@ -1233,6 +1399,9 @@ def _export_verification_outputs(
     opengrid_snap: _DisplayShape,
     openconnect_screw: _DisplayShape,
     multiconnect_screw: _DisplayShape,
+    blocking_pin_snap: _DisplayShape,
+    multiconnect_blocking_screw: _DisplayShape,
+    blocking_pin_section: _DisplayShape,
     board_config: GridConfig,
     slot_delete_tool_config: ConnectorSlotDeleteToolConfig,
     adjacent_connector_config: AdjacentGridConnectorConfig,
@@ -1246,6 +1415,8 @@ def _export_verification_outputs(
     opengrid_snap_config: OpenGridSnapConfig,
     openconnect_screw_config: OpenConnectScrewConfig,
     multiconnect_screw_config: MulticonnectScrewConfig,
+    blocking_pin_snap_config: BlockingPinSnapConfig,
+    multiconnect_blocking_screw_config: MulticonnectBlockingScrewConfig,
     verification_dir: Path,
 ) -> tuple[Path, ...]:
     if not verification_config.enabled:
@@ -1267,6 +1438,9 @@ def _export_verification_outputs(
             opengrid_snap=opengrid_snap,
             openconnect_screw=openconnect_screw,
             multiconnect_screw=multiconnect_screw,
+            blocking_pin_snap=blocking_pin_snap,
+            multiconnect_blocking_screw=multiconnect_blocking_screw,
+            blocking_pin_section=blocking_pin_section,
             verification_dir=verification_dir,
         )
     return _export_variant_output_verification(
@@ -1283,6 +1457,9 @@ def _export_verification_outputs(
         opengrid_snap_config=opengrid_snap_config,
         openconnect_screw_config=openconnect_screw_config,
         multiconnect_screw_config=multiconnect_screw_config,
+        blocking_pin_snap_config=blocking_pin_snap_config,
+        multiconnect_blocking_screw_config=multiconnect_blocking_screw_config,
+        blocking_pin_section=blocking_pin_section,
         verification_dir=verification_dir,
     )
 
@@ -1311,8 +1488,8 @@ def main() -> None:
     args = _parse_args()
     config = _load_config(args.config)
     output_dir = _output_dir(config)
-    _prepare_output_dir(output_dir)
     verification_dir = output_dir / "verification"
+    _prepare_output_dir(output_dir, verification_dir)
     verification_config = _verification_config(config)
 
     adjacent_connector_config = _adjacent_connector_config(config)
@@ -1348,6 +1525,14 @@ def main() -> None:
         connector_slot_config,
         text_config,
     )
+    blocking_pin_snap_config = _blocking_pin_snap_config(snap_body_config, snap_thread_config, config)
+    multiconnect_blocking_screw_config = _multiconnect_blocking_screw_config(
+        blocking_pin_snap_config,
+        multiconnect_head_config,
+        connector_slot_config,
+        text_config,
+        config,
+    )
     multiconnect_profile = build_multiconnect_profile(multiconnect_config)
     multiconnect_rail = build_multiconnect_rail(multiconnect_config)
     multiconnect_receiver = build_multiconnect_receiver(multiconnect_config)
@@ -1365,6 +1550,9 @@ def main() -> None:
     opengrid_snap = build_opengrid_snap(opengrid_snap_config)
     openconnect_screw = build_openconnect_screw(openconnect_screw_config)
     multiconnect_screw = build_multiconnect_screw(multiconnect_screw_config)
+    blocking_pin_snap = build_blocking_pin_snap(blocking_pin_snap_config)
+    multiconnect_blocking_screw = build_multiconnect_blocking_screw(multiconnect_blocking_screw_config)
+    blocking_pin_section = _blocking_pin_section(blocking_pin_snap_config, multiconnect_blocking_screw_config)
 
     grid_path = output_dir / "opengrid_board.step"
     slot_delete_tool_path = output_dir / "adjacent_grid_connector_slot_delete_tool.step"
@@ -1381,6 +1569,8 @@ def main() -> None:
     opengrid_snap_path = output_dir / "opengrid_snap.step"
     openconnect_screw_path = output_dir / "openconnect_screw.step"
     multiconnect_screw_path = output_dir / "multiconnect_screw.step"
+    blocking_pin_snap_path = output_dir / "blocking_pin_snap.step"
+    multiconnect_blocking_screw_path = output_dir / "multiconnect_blocking_screw.step"
     multiconnect_part_paths = tuple(
         output_dir / f"multiconnect_{_slug(part_kind.value)}.step"
         for part_kind, _shape in multiconnect_parts
@@ -1400,6 +1590,8 @@ def main() -> None:
     bd.export_step(opengrid_snap, opengrid_snap_path)
     bd.export_step(openconnect_screw, openconnect_screw_path)
     bd.export_step(multiconnect_screw, multiconnect_screw_path)
+    bd.export_step(blocking_pin_snap, blocking_pin_snap_path)
+    bd.export_step(multiconnect_blocking_screw, multiconnect_blocking_screw_path)
     for path, (_part_kind, shape) in zip(multiconnect_part_paths, multiconnect_parts):
         bd.export_step(cast(Any, shape), path)
     verification_paths = _export_verification_outputs(
@@ -1419,6 +1611,9 @@ def main() -> None:
         opengrid_snap=opengrid_snap,
         openconnect_screw=openconnect_screw,
         multiconnect_screw=multiconnect_screw,
+        blocking_pin_snap=blocking_pin_snap,
+        multiconnect_blocking_screw=multiconnect_blocking_screw,
+        blocking_pin_section=blocking_pin_section,
         board_config=board_config,
         slot_delete_tool_config=slot_delete_tool_config,
         adjacent_connector_config=adjacent_connector_config,
@@ -1432,6 +1627,8 @@ def main() -> None:
         opengrid_snap_config=opengrid_snap_config,
         openconnect_screw_config=openconnect_screw_config,
         multiconnect_screw_config=multiconnect_screw_config,
+        blocking_pin_snap_config=blocking_pin_snap_config,
+        multiconnect_blocking_screw_config=multiconnect_blocking_screw_config,
         verification_dir=verification_dir,
     )
     verification_index_paths: tuple[Path, ...] = ()
@@ -1464,6 +1661,8 @@ def main() -> None:
             opengrid_snap,
             openconnect_screw,
             multiconnect_screw,
+            blocking_pin_snap,
+            multiconnect_blocking_screw,
             viewer,
         )
 
@@ -1483,6 +1682,8 @@ def main() -> None:
         opengrid_snap_path,
         openconnect_screw_path,
         multiconnect_screw_path,
+        blocking_pin_snap_path,
+        multiconnect_blocking_screw_path,
         *multiconnect_part_paths,
         *verification_index_paths,
         *verification_paths,
@@ -1498,6 +1699,8 @@ def main() -> None:
         + f"\nopengrid_snap={opengrid_snap_config!r}"
         + f"\nopenconnect_screw={openconnect_screw_config!r}"
         + f"\nmulticonnect_screw={multiconnect_screw_config!r}"
+        + f"\nblocking_pin_snap={blocking_pin_snap_config!r}"
+        + f"\nmulticonnect_blocking_screw={multiconnect_blocking_screw_config!r}"
         + f"\nmulticonnect_profile={multiconnect_profile!r}"
     )
 

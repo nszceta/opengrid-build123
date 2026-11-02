@@ -14,6 +14,7 @@ import build123d as bd
 
 from opengrid_build123.opengrid import (
     AdjacentGridConnectorConfig,
+    BlockingPinSnapConfig,
     BoardKind,
     ChamferMode,
     FillSpaceMode,
@@ -38,9 +39,12 @@ from opengrid_build123.opengrid import (
     apply_screw_preset,
     StackingMethod,
     ThreadType,
+    MulticonnectBlockingScrewConfig,
     MulticonnectScrewConfig,
     TextEngravingConfig,
     TextLabel,
+    build_blocking_pin_snap,
+    build_multiconnect_blocking_screw,
     build_connector_slot_delete_tool,
     build_adjacent_grid_connector,
     build_openconnect_head,
@@ -57,6 +61,8 @@ from opengrid_build123.opengrid import (
     build_snap_body,
     build_expanding_snap,
     build_opengrid_snap,
+    _blocking_ledge,
+    _blocking_pad,
     _connector_z_base,
     _connector_slot_delete_tool_base,
     _connector_positions,
@@ -239,6 +245,8 @@ def test_example_config_exhaustively_lists_config_dataclass_fields() -> None:
         "opengrid_snap_offset",
         "openconnect_screw_offset",
         "multiconnect_screw_offset",
+        "blocking_pin_snap_offset",
+        "multiconnect_blocking_screw_offset",
     }
 
     expected_board_fields = {field.name for field in dataclass_fields(GridConfig)} - {"connector_slot_delete_tool"}
@@ -279,6 +287,12 @@ def test_example_config_exhaustively_lists_config_dataclass_fields() -> None:
     assert set(_mapping_section(config, "openconnect_screw")) == {
         field.name for field in dataclass_fields(OpenConnectScrewConfig)
     } - {"threads", "head", "connector_slot", "text"}
+    assert set(_mapping_section(config, "blocking_pin_snap")) == {
+        field.name for field in dataclass_fields(BlockingPinSnapConfig)
+    } - {"snap_body", "threads"} | {"thread_clearance"}
+    assert set(_mapping_section(config, "multiconnect_blocking_screw")) == {
+        field.name for field in dataclass_fields(MulticonnectBlockingScrewConfig)
+    } - {"snap", "head", "connector_slot", "text"}
 
 
 @pytest.mark.parametrize(
@@ -1077,17 +1091,24 @@ def test_variant_verification_defines_every_public_enum_variant() -> None:
         "top_none",
     }
 
-def test_prepare_output_dir_removes_stale_output_tree(tmp_path: Path) -> None:
+
+def test_prepare_output_dir_clears_only_verification_tree(tmp_path: Path) -> None:
     output_dir = tmp_path / "output"
-    stale_file = output_dir / "stale.txt"
-    output_dir.mkdir()
-    stale_file.write_text("stale", encoding="utf-8")
+    verification_dir = output_dir / "verification"
+    stale_gallery = verification_dir / "old_component" / "gallery.html"
+    kept_files = (output_dir / "my_board.step", output_dir / "simulation" / "summary.json")
+    stale_gallery.parent.mkdir(parents=True)
+    stale_gallery.write_text("stale", encoding="utf-8")
+    for kept in kept_files:
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        kept.write_text("keep", encoding="utf-8")
 
     example_main = _example_main()
-    example_main._prepare_output_dir(output_dir)
+    example_main._prepare_output_dir(output_dir, verification_dir)
 
     assert output_dir.is_dir()
-    assert not stale_file.exists()
+    assert not verification_dir.exists()
+    assert all(kept.read_text(encoding="utf-8") == "keep" for kept in kept_files)
 
 
 def test_export_verification_outputs_honors_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1126,6 +1147,9 @@ def test_export_verification_outputs_honors_config(monkeypatch: pytest.MonkeyPat
         "opengrid_snap": shape,
         "openconnect_screw": shape,
         "multiconnect_screw": shape,
+        "blocking_pin_snap": shape,
+        "multiconnect_blocking_screw": shape,
+        "blocking_pin_section": shape,
         "board_config": GridConfig(),
         "slot_delete_tool_config": ConnectorSlotDeleteToolConfig(),
         "adjacent_connector_config": AdjacentGridConnectorConfig(),
@@ -1139,6 +1163,8 @@ def test_export_verification_outputs_honors_config(monkeypatch: pytest.MonkeyPat
         "opengrid_snap_config": OpenGridSnapConfig(snap_body=snap_body, threads=snap_threads, expanding_snap=expanding),
         "openconnect_screw_config": OpenConnectScrewConfig(threads=snap_threads),
         "multiconnect_screw_config": MulticonnectScrewConfig(threads=snap_threads),
+        "blocking_pin_snap_config": BlockingPinSnapConfig(),
+        "multiconnect_blocking_screw_config": MulticonnectBlockingScrewConfig(),
         "verification_dir": tmp_path,
     }
 
@@ -1182,6 +1208,9 @@ def test_output_verification_exports_shape_svgs_into_named_subdirectories(tmp_pa
         opengrid_snap=rail,
         openconnect_screw=rail,
         multiconnect_screw=build_multiconnect_screw(MulticonnectScrewConfig(threads=SnapThreadConfig(height=4.0))),
+        blocking_pin_snap=rail,
+        multiconnect_blocking_screw=rail,
+        blocking_pin_section=rail,
         verification_dir=tmp_path,
     )
 
@@ -1201,6 +1230,9 @@ def test_output_verification_exports_shape_svgs_into_named_subdirectories(tmp_pa
         "opengrid_snap",
         "openconnect_screw",
         "multiconnect_screw",
+        "blocking_pin_snap",
+        "multiconnect_blocking_screw",
+        "blocking_pin_assembly",
     )
     relative_paths = tuple(path.relative_to(tmp_path) for path in paths)
 
@@ -1734,3 +1766,75 @@ def test_text_engraving_removes_material_from_product_builders() -> None:
 
     assert engraved.bounding_box().size == pytest.approx(plain.bounding_box().size)
     assert engraved.volume < plain.volume
+
+
+@functools.cache
+def _blocking_pin_fixture() -> tuple[BlockingPinSnapConfig, Any, Any, Any]:
+    """Default snap, its locked screw (snap frame) and a 1x1 Heavy board."""
+    snap_config = BlockingPinSnapConfig()
+    snap = build_blocking_pin_snap(snap_config)
+    screw = build_multiconnect_blocking_screw(MulticonnectBlockingScrewConfig(snap=snap_config))
+    locked = screw.rotate(bd.Axis.X, 180.0).translate((0.0, 0.0, snap_config.height + MulticonnectHeadConfig().total_height))
+    board = build_open_grid(
+        GridConfig(kind=BoardKind.HEAVY, board_width=1, board_height=1, chamfers=ChamferMode.NONE, connector_holes=False, screw_mounting=ScrewMounting.NONE)
+    )
+    return snap_config, snap, locked, board
+
+
+def _intersection_volume(first: Any, second: Any) -> float:
+    common = first & second
+    return float(common.volume) if common is not None else 0.0
+
+
+def test_blocking_pin_parts_are_single_solids() -> None:
+    _config, snap, locked, _board = _blocking_pin_fixture()
+
+    assert len(snap.solids()) == 1
+    assert len(locked.solids()) == 1
+    assert snap.is_valid
+    assert locked.is_valid
+    assert snap.bounding_box().size.Z == pytest.approx(13.0)
+
+
+def test_blocking_pin_snap_seats_flush_and_screw_blocks_the_legs() -> None:
+    config, snap, locked, board = _blocking_pin_fixture()
+    seat = config.board_thickness - config.height
+    seated = snap.translate((0.0, 0.0, seat))
+
+    # Seated: flush with the board face, no interference, ledges and pads 0.05 from the lip ramp and corner chamfers.
+    assert seated.bounding_box().max.Z == pytest.approx(config.board_thickness)
+    assert _intersection_volume(seated, board) <= 0.001
+    for tool in (_blocking_ledge(config), _blocking_pad(config)):
+        gap = tool.translate((0.0, 0.0, seat)).distance_to(board)
+        assert gap == pytest.approx(config.seat_clearance, abs=0.005)
+    # A ledge sits under the top lip: snap material below the ramp, board material above it.
+    assert seated.is_inside((0.0, 12.7, 11.9))
+    assert not board.is_inside((0.0, 12.7, 11.9))
+    assert board.is_inside((0.0, 12.7, 12.3))
+    assert not seated.is_inside((0.0, 12.7, 12.3))
+    # Lifting the snap 0.1 loads only the ledges against the lip.
+    lifted = snap.translate((0.0, 0.0, seat + 0.1))
+    ledge_only = sum((_blocking_ledge(config).rotate(bd.Axis.Z, angle) for angle in (0.0, 90.0, 180.0, 270.0)), bd.Part())
+    assert _intersection_volume(lifted - ledge_only.translate((0.0, 0.0, seat + 0.1)), board) <= 0.001
+
+    # Locked: the shank is blocking_clearance from the bore all along its cylinder, thread and legs never touch.
+    blocking_clearance = MulticonnectBlockingScrewConfig().blocking_clearance
+    bore = config.leg_bore_radius
+    assert _intersection_volume(snap, locked) <= 0.001
+    for angle in range(0, 360, 30):
+        cos_a, sin_a = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+        for z in (6.0, 9.5, 12.5):
+            assert locked.is_inside((cos_a * (bore - blocking_clearance - 0.01), sin_a * (bore - blocking_clearance - 0.01), z))
+            assert not locked.is_inside((cos_a * (bore - blocking_clearance + 0.01), sin_a * (bore - blocking_clearance + 0.01), z))
+            assert snap.is_inside((cos_a * (bore + 0.01), sin_a * (bore + 0.01), z))
+            assert not snap.is_inside((cos_a * (bore - 0.01), sin_a * (bore - 0.01), z))
+    slab = bd.Box(40.0, 40.0, config.height - 5.6, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN)).translate((0.0, 0.0, 5.6))
+    assert (snap & slab).distance_to(locked & slab) == pytest.approx(blocking_clearance, abs=0.01)
+    # The stop annulus bears on the sleeve top.
+    assert snap.is_inside((8.6, 0.0, config.hub_height - 0.05))
+    assert locked.is_inside((8.6, 0.0, config.hub_height + 0.05))
+    assert not locked.is_inside((8.6, 0.0, config.hub_height - 0.05))
+
+    # Blocked: legs moved inward by 0.2 (a thicker leg) run into the shank.
+    collapsed = build_blocking_pin_snap(replace(config, leg_thickness=config.leg_thickness + 0.2))
+    assert _intersection_volume(collapsed, locked) > 1.0

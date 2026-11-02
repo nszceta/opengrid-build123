@@ -21,6 +21,12 @@ dev = [
     "pytest>=9.0.3",
     "pytest-xdist>=3.8.0",
 ]
+sim = [
+    "gmsh>=4.15.2",
+    "matplotlib>=3.11.2",
+    "numpy>=2.4.6",
+    "scipy>=1.17.1",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

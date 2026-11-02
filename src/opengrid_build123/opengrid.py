@@ -33,6 +33,8 @@ __all__ = [
     "TextEngravingConfig",
     "OpenConnectScrewConfig",
     "MulticonnectScrewConfig",
+    "BlockingPinSnapConfig",
+    "MulticonnectBlockingScrewConfig",
     "OpenGridSnapConfig",
     "GridConfig",
     "ScrewMounting",
@@ -40,6 +42,8 @@ __all__ = [
     "apply_screw_preset",
     "StackingMethod",
     "build_fill_space",
+    "build_blocking_pin_snap",
+    "build_multiconnect_blocking_screw",
     "build_openconnect_head",
     "build_openconnect_screw",
     "build_multiconnect_head",
@@ -140,6 +144,12 @@ _OPENCONNECT_FOLDED_TEXT_SHIFT = 2.0
 _MULTICONNECT_HEAD_DIMPLE_RADIUS = 1.05
 _MULTICONNECT_HEAD_DIMPLE_TIP_RADIUS = 0.05
 _MULTICONNECT_HEAD_DIMPLE_DEPTH = 1.0
+# Flat screw stop annulus width beyond the thread crest: the widest flat overhang a tip-down print bridges.
+_BLOCKING_STOP_ANNULUS_WIDTH = 1.0
+# Leg ledge ends run this far past the slot wall so the slot cut trims them to the leg width.
+_BLOCKING_LEDGE_TRIM = 0.1
+# Radial overlap of the ledge and pad tools into the snap body.
+_BLOCKING_TOOL_OVERLAP = 0.4
 
 
 class BoardKind(StrEnum):
@@ -684,6 +694,100 @@ class MulticonnectScrewConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class BlockingPinSnapConfig:
+    """openGrid Heavy snap whose legs are blocked from collapsing by a Multiconnect screw shank.
+
+    Frame: XY-centred, z=0 at the deep (bottom) end, z=``height`` at the top; pull-out is +z.
+    Seat it in a Heavy board with ``translate((0, 0, board_thickness - height))``.
+    Only the outline width/height/corner chamfer of ``snap_body`` are used.
+    ``ledge_reach`` is a radius from the cell centre; the leg bore radius is
+    ``snap_body.width / 2 - leg_thickness``.
+    """
+
+    snap_body: SnapBodyConfig = field(default_factory=SnapBodyConfig)
+    threads: SnapThreadConfig = field(default_factory=lambda: SnapThreadConfig(clearance=0.3))
+    board_thickness: float = _DEFAULT_HEAVY_THICKNESS
+    height: float = 13.0
+    hub_height: float = 3.0
+    web_thickness: float = 1.2
+    sleeve_outer_radius: float = 10.6
+    leg_thickness: float = 0.8
+    leg_width: float = 10.0
+    leg_slot_width: float = 0.6
+    ledge_reach: float = 12.95
+    ledge_lead_in_angle: float = 45.0
+    seat_clearance: float = 0.02
+
+    def validate(self) -> None:
+        self.snap_body.validate()
+        self.threads.validate()
+        if abs(self.snap_body.width - self.snap_body.height) > _EPSILON:
+            raise ValueError("blocking-pin snap outline must be square")
+        if min(self.leg_thickness, self.leg_width, self.leg_slot_width, self.sleeve_outer_radius) <= 0.0:
+            raise ValueError("blocking-pin snap leg and sleeve dimensions must be positive")
+        if self.seat_clearance < 0.0:
+            raise ValueError("blocking-pin snap seat_clearance must be non-negative")
+        if not 0.0 < self.web_thickness < self.hub_height < self.height <= self.board_thickness:
+            raise ValueError("blocking-pin snap requires 0 < web_thickness < hub_height < height <= board_thickness")
+        half_width = self.snap_body.width / 2.0
+        groove_radius = _DEFAULT_TILE_SIZE / 2.0 - _OUTSIDE_EXTRUSION
+        if not half_width < self.ledge_reach < groove_radius:
+            raise ValueError("blocking-pin snap ledge_reach must lie between the outline and the groove wall")
+        if not 0.0 < self.ledge_lead_in_angle < 90.0:
+            raise ValueError("blocking-pin snap ledge_lead_in_angle must be in (0, 90)")
+        if self.leg_bore_radius <= self.threads.effective_diameter / 2.0:
+            raise ValueError("blocking-pin snap leg bore must be larger than the thread hole")
+        if not self.threads.effective_diameter / 2.0 < self.stop_radius < self.sleeve_outer_radius < self.leg_bore_radius:
+            raise ValueError("blocking-pin snap needs thread hole < screw stop radius < sleeve_outer_radius < leg bore radius")
+        if self.leg_width / 2.0 + self.leg_slot_width >= half_width - self.snap_body.corner_chamfer:
+            raise ValueError("blocking-pin snap leg slots leave no corner post")
+        if self.hub_height - self.web_thickness <= _EPSILON:
+            raise ValueError("blocking-pin snap hub must rise above the web")
+        if self.hub_height < 0.2 + _EPSILON:
+            raise ValueError("blocking-pin snap hub_height is too small for the screw thread")
+
+    @property
+    def leg_bore_radius(self) -> float:
+        return self.snap_body.width / 2.0 - self.leg_thickness
+
+    @property
+    def stop_radius(self) -> float:
+        """Outer radius of the flat screw stop annulus (one printable overhang width beyond the thread crest)."""
+        return self.threads.diameter / 2.0 + _BLOCKING_STOP_ANNULUS_WIDTH
+
+
+@dataclass(frozen=True, slots=True)
+class MulticonnectBlockingScrewConfig:
+    """Multiconnect screw with a shank that blocks the legs of a ``BlockingPinSnapConfig`` snap.
+
+    Frame: head outer face at z=0, shank and thread along +z. In the snap frame the screw is placed with
+    ``screw.rotate(Axis.X, 180).translate((0, 0, snap.height + head.total_height))``.
+    """
+
+    snap: BlockingPinSnapConfig = field(default_factory=BlockingPinSnapConfig)
+    head: MulticonnectHeadConfig = field(default_factory=MulticonnectHeadConfig)
+    connector_slot: ConnectorSlotConfig = field(default_factory=ConnectorSlotConfig)
+    blocking_clearance: float = 0.05
+    text: TextEngravingConfig = field(default_factory=TextEngravingConfig)
+
+    def validate(self) -> None:
+        self.snap.validate()
+        self.head.validate()
+        self.connector_slot.validate()
+        self.text.validate()
+        if self.blocking_clearance < 0.0:
+            raise ValueError("blocking screw blocking_clearance must be non-negative")
+        if self.shank_radius <= self.snap.stop_radius:
+            raise ValueError("blocking screw shank must be wider than the stop annulus")
+        if self.snap.height - self.snap.hub_height <= self.shank_radius - self.snap.stop_radius:
+            raise ValueError("blocking screw shank is too short for its stop cone")
+
+    @property
+    def shank_radius(self) -> float:
+        return self.snap.leg_bore_radius - self.blocking_clearance
+
+
+@dataclass(frozen=True, slots=True)
 class OpenGridSnapConfig:
     """Configuration for source-equivalent assembled openGrid snap products."""
 
@@ -1180,6 +1284,28 @@ def build_multiconnect_screw(config: MulticonnectScrewConfig = MulticonnectScrew
     )
     screw = cast(Shape, head + threads)
     return _engrave_text(screw, config.text, config.head.total_height + config.threads.height)
+
+
+def build_blocking_pin_snap(config: BlockingPinSnapConfig = BlockingPinSnapConfig()) -> Shape:
+    """Build the openGrid Heavy blocking-pin snap (snap frame: z=0 at the deep end, top at ``height``).
+
+    Four legs with ledges latch under the Heavy top lip; four corner posts carry depth-stop pads. A
+    ``MulticonnectBlockingScrewConfig`` screw threaded into the hub blocks the legs from collapsing inward.
+    """
+
+    return _blocking_pin_snap_shape(config, thread_proxy=False)
+
+
+def build_multiconnect_blocking_screw(
+    config: MulticonnectBlockingScrewConfig = MulticonnectBlockingScrewConfig(),
+) -> Shape:
+    """Build the Multiconnect screw whose shank blocks the legs of ``build_blocking_pin_snap``.
+
+    Screw frame: head outer face at z=0; shank and thread along +z. It prints tip-down.
+    """
+
+    return _multiconnect_blocking_screw_shape(config, thread_proxy=False)
+
 
 
 def build_opengrid_snap(config: OpenGridSnapConfig = OpenGridSnapConfig()) -> Shape:
@@ -3207,6 +3333,195 @@ def _opengrid_snap_attachment(config: OpenGridSnapConfig) -> Shape | None:
     if config.kind is OpenGridSnapKind.MULTICONNECT:
         return _flip_snap_head(build_multiconnect_head(config.multiconnect_head), config.multiconnect_head.total_height)
     return None
+
+
+def _blocking_thread_proxy_radius(threads: SnapThreadConfig) -> float:
+    """Radius of the smooth stand-in for the thread: the mid-depth of the unclearanced thread profile."""
+    return threads.diameter / 2.0 - threads.pitch / 6.0
+
+
+def _blocking_pin_snap_shape(config: BlockingPinSnapConfig, *, thread_proxy: bool) -> Shape:
+    config.validate()
+    body = _extrude_xy_polygon(
+        _chamfered_rectangle_points(config.snap_body.width, config.snap_body.height, config.snap_body.corner_chamfer),
+        config.height,
+    )
+    additions: list[Shape] = []
+    for angle in (0.0, 90.0, 180.0, 270.0):
+        additions.append(_blocking_ledge(config).rotate(bd.Axis.Z, angle))
+        additions.append(_blocking_pad(config).rotate(bd.Axis.Z, angle))
+    body = cast(Shape, body + _fuse(additions))
+    body = cast(Shape, body - _blocking_relief(config))
+    body = cast(Shape, body - _blocking_slots(config))
+    return cast(Shape, body - _blocking_thread_hole(config, thread_proxy=thread_proxy))
+
+
+def _blocking_relief(config: BlockingPinSnapConfig) -> Shape:
+    """Revolved void: the annular relief around the sleeve plus the leg bore above the hub."""
+    bore = config.leg_bore_radius
+    top = config.height + 1.0
+    points = (
+        (config.sleeve_outer_radius, config.web_thickness),
+        (bore, config.web_thickness),
+        (bore, top),
+        (0.0, top),
+        (0.0, config.hub_height),
+        (config.sleeve_outer_radius, config.hub_height),
+    )
+    face = bd.Face(bd.Wire.make_polygon([(x, 0.0, z) for x, z in points], close=True))
+    return cast(Shape, bd.Solid.revolve(face, 360.0, bd.Axis.Z))
+
+
+def _blocking_thread_hole(config: BlockingPinSnapConfig, *, thread_proxy: bool) -> Shape:
+    """Thread void: the screw thread's mirror image under the locked placement, widened by `threads.clearance`."""
+    length = config.hub_height + 2.0 * _EPSILON
+    if thread_proxy:
+        return cast(
+            Shape,
+            bd.Solid.make_cylinder(_blocking_thread_proxy_radius(config.threads), length, bd.Plane.XY.offset(-_EPSILON)),
+        )
+    threads = build_snap_threads(replace(config.threads, height=length))
+    return threads.rotate(bd.Axis.X, 180.0).translate((0.0, 0.0, config.hub_height + _EPSILON))
+
+
+def _blocking_slots(config: BlockingPinSnapConfig) -> Shape:
+    """Eight radial slots with full-round bottoms, two beside each leg."""
+    radius = config.leg_slot_width / 2.0
+    inner_x = config.leg_width / 2.0
+    bottom_z = config.web_thickness + radius
+    top_z = config.height + 1.0
+    start_y = math.sqrt(
+        ((config.sleeve_outer_radius + config.leg_bore_radius) / 2.0) ** 2 - inner_x * inner_x
+    )
+    length = config.snap_body.height / 2.0 + 1.0 - start_y
+    tools: list[Shape] = []
+    for sign in (-1.0, 1.0):
+        center_x = sign * (inner_x + radius)
+        box = bd.Solid.make_box(config.leg_slot_width, length, top_z - bottom_z).translate(
+            (center_x - radius, start_y, bottom_z)
+        )
+        round_bottom = bd.Solid.make_cylinder(
+            radius,
+            length,
+            bd.Plane(origin=(center_x, start_y, bottom_z), x_dir=(1.0, 0.0, 0.0), z_dir=(0.0, 1.0, 0.0)),
+        )
+        for angle in (0.0, 90.0, 180.0, 270.0):
+            tools.append(_fuse((cast(Shape, box), cast(Shape, round_bottom))).rotate(bd.Axis.Z, angle))
+    return _fuse(tools)
+
+
+def _blocking_lip_ramp(config: BlockingPinSnapConfig) -> tuple[Point2D, Point2D]:
+    """Heavy top-lip underside ramp as two (radius, snap z) points, taken from the board profile helpers."""
+    tile_thickness = (config.board_thickness - _DEFAULT_HEAVY_GAP) / 2.0
+    board_to_snap = config.height - config.board_thickness
+    side = _side_profile(tile_thickness, heavy_profile=True)
+    start, end = side[1], side[2]
+    top_start = tile_thickness + _DEFAULT_HEAVY_GAP
+    half = _DEFAULT_TILE_SIZE / 2.0
+    return (
+        (half - start[1], top_start + start[0] + board_to_snap),
+        (half - end[1], top_start + end[0] + board_to_snap),
+    )
+
+
+def _blocking_ledge(config: BlockingPinSnapConfig) -> Shape:
+    """Straight ledge bar on the +y leg: upper face parallel to the lip ramp, outer face, then the lead-in."""
+    (r0, z0), (r1, z1) = _blocking_lip_ramp(config)
+    length = math.hypot(r1 - r0, z1 - z0)
+    # Unit normal of the ramp pointing away from the board (into the groove side the ledge occupies).
+    away_r, away_z = -(z1 - z0) / length, (r1 - r0) / length
+    base_r = r0 + config.seat_clearance * away_r
+    base_z = z0 + config.seat_clearance * away_z
+    slope = (z1 - z0) / (r1 - r0)
+
+    def upper_z(radius: float) -> float:
+        return base_z + (radius - base_r) * slope
+
+    leg_r = config.snap_body.width / 2.0
+    inner_r = leg_r - _BLOCKING_TOOL_OVERLAP
+    lead_in_z = z0 - (config.ledge_reach - leg_r) / math.tan(math.radians(config.ledge_lead_in_angle))
+    profile = (
+        (inner_r, upper_z(leg_r)),
+        (leg_r, upper_z(leg_r)),
+        (config.ledge_reach, upper_z(config.ledge_reach)),
+        (config.ledge_reach, z0),
+        (leg_r, lead_in_z),
+        (inner_r, lead_in_z),
+    )
+    half_width = config.leg_width / 2.0 + _BLOCKING_LEDGE_TRIM
+    face = bd.Face(bd.Wire.make_polygon([(-half_width, r, z) for r, z in profile], close=True))
+    return cast(Shape, bd.Solid.extrude(face, (2.0 * half_width, 0.0, 0.0)))
+
+
+def _blocking_pad(config: BlockingPinSnapConfig) -> Shape:
+    """Depth-stop wedge on the +x+y corner: a 45 degree face parallel to the board's top corner chamfer."""
+    tile_thickness = (config.board_thickness - _DEFAULT_HEAVY_GAP) / 2.0
+    board_to_snap = config.height - config.board_thickness
+    top_start = tile_thickness + _DEFAULT_HEAVY_GAP
+    diagonal = _DEFAULT_TILE_SIZE * math.sqrt(0.5)
+    (z0, c0), (z1, c1) = _corner_profile(tile_thickness)[2:4]
+    # (diagonal radius, snap z) of the chamfer face, from the board corner profile.
+    p0 = (diagonal - c0, top_start + z0 + board_to_snap)
+    p1 = (diagonal - c1, top_start + z1 + board_to_snap)
+    length = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+    away = (-(p1[1] - p0[1]) / length, (p1[0] - p0[0]) / length)
+    q0 = (p0[0] + config.seat_clearance * away[0], p0[1] + config.seat_clearance * away[1])
+    slope = (p1[0] - p0[0]) / (p1[1] - p0[1])
+    top_u = q0[0] + (config.height - q0[1]) * slope
+    outline_u = (config.snap_body.width - config.snap_body.corner_chamfer) * math.sqrt(0.5)
+    base_u = outline_u - _BLOCKING_TOOL_OVERLAP
+    base_z = config.height - (top_u - base_u) / slope
+    wedge = (
+        (base_u - _BLOCKING_TOOL_OVERLAP, base_z),
+        (base_u, base_z),
+        (top_u, config.height),
+        (base_u - _BLOCKING_TOOL_OVERLAP, config.height),
+    )
+    reach = config.snap_body.width
+    face = bd.Face(bd.Wire.make_polygon([(u, -reach, z) for u, z in wedge], close=True))
+    prism = bd.Solid.extrude(face, (0.0, 2.0 * reach, 0.0)).rotate(bd.Axis.Z, 45.0)
+    outline = _extrude_xy_polygon(
+        _chamfered_rectangle_points(config.snap_body.width, config.snap_body.height, 0.0), config.height
+    )
+    return cast(Shape, prism & outline)
+
+
+def _multiconnect_blocking_screw_shape(config: MulticonnectBlockingScrewConfig, *, thread_proxy: bool) -> Shape:
+    config.validate()
+    snap = config.snap
+    head_height = config.head.total_height
+
+    def screw_z(snap_z: float) -> float:
+        # Locked placement maps screw z to snap z = snap.height + head_height - z.
+        return head_height + snap.height - snap_z
+
+    shank_radius = config.shank_radius
+    cone_top = snap.hub_height + (shank_radius - snap.stop_radius)
+    points = (
+        (0.0, head_height - _EPSILON),
+        (shank_radius, head_height - _EPSILON),
+        (shank_radius, screw_z(cone_top)),
+        (snap.stop_radius, screw_z(snap.hub_height)),
+        (0.0, screw_z(snap.hub_height)),
+    )
+    face = bd.Face(bd.Wire.make_polygon([(x, 0.0, z) for x, z in points], close=True))
+    shank = cast(Shape, bd.Solid.revolve(face, 360.0, bd.Axis.Z))
+    thread_length = snap.hub_height - 0.2 + _EPSILON
+    thread_start = screw_z(snap.hub_height + _EPSILON)
+    if thread_proxy:
+        thread = cast(
+            Shape,
+            bd.Solid.make_cylinder(
+                _blocking_thread_proxy_radius(snap.threads), thread_length, bd.Plane.XY.offset(thread_start)
+            ),
+        )
+    else:
+        thread = build_snap_threads(replace(snap.threads, clearance=0.0, height=thread_length)).translate(
+            (0.0, 0.0, thread_start)
+        )
+    head = build_multiconnect_head(config.head, config.connector_slot)
+    screw = _fuse((head, shank, thread))
+    return _engrave_text(screw, config.text, screw_z(snap.hub_height - 0.2))
 
 
 def _flip_snap_head(head: Shape, height: float) -> Shape:

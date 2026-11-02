@@ -51,6 +51,8 @@ viewer:
   opengrid_snap_offset: [280.0, 0.0, 0.0]
   openconnect_screw_offset: [308.0, 0.0, 0.0]
   multiconnect_screw_offset: [336.0, 0.0, 0.0]
+  blocking_pin_snap_offset: [364.0, 0.0, 0.0]
+  multiconnect_blocking_screw_offset: [392.0, 0.0, 0.0]
 
 board:
   # Purpose: Select the board cross-section/profile.
@@ -566,3 +568,75 @@ openconnect_screw:
   # (source conditional_fold: hinge at the head front edge, 0.4 x 0.2 gap).
   # Recommended: false for normal screw exports.
   folded: false
+
+blocking_pin_snap:
+  # Purpose: Blocking-pin snap for openGrid Heavy boards. Four legs with ledges
+  # latch under the Heavy top lip; corner posts with 45 degree pads stop the
+  # snap flush with the board face. A Multiconnect blocking screw then blocks
+  # the legs from collapsing inward, so pull-out does not depend on thread
+  # tightness. The outline comes from snap_body (width, height, corner_chamfer);
+  # thread type, diameter and pitch come from snap_threads.
+  # Recommended: keep the defaults below for a 28 mm Heavy board (13.8 mm).
+
+  # Purpose: Internal thread clearance (added to the thread diameter) in the hub.
+  # The thread only holds the screw, so it can be printed loose.
+  # Recommended: 0.3.
+  thread_clearance: 0.3
+
+  # Purpose: Thickness of the Heavy board the snap seats in.
+  # Recommended: 13.8 (Heavy); other boards are out of scope.
+  board_thickness: 13.8
+
+  # Purpose: Snap height. The snap is seated at z = board_thickness - height so
+  # its top is flush with the board face.
+  # Recommended: 13.0 (snap spans board z 0.8 to 13.8).
+  height: 13.0
+
+  # Purpose: Height of the threaded hub (sleeve) above the snap bottom.
+  # Recommended: 3.0.
+  hub_height: 3.0
+
+  # Purpose: Thickness of the bottom web the legs and corner posts root in; the
+  # annular relief between sleeve and wall starts above it.
+  # Recommended: 1.2; thicker is stiffer but shortens the legs.
+  web_thickness: 1.2
+
+  # Purpose: Outer radius of the threaded sleeve; the relief ring runs from here
+  # to the leg bore radius.
+  # Recommended: 10.6.
+  sleeve_outer_radius: 10.6
+
+  # Purpose: Leg thickness at the leg centre. The leg bore radius the screw
+  # shank blocks is snap_body.width / 2 - leg_thickness.
+  # Recommended: 0.8; thinner legs bend more easily but are weaker.
+  leg_thickness: 0.8
+
+  # Purpose: Width of each leg along its side of the snap.
+  # Recommended: 10.0 (FEA-tuned: wider legs lift less under shear).
+  leg_width: 10.0
+
+  # Purpose: Width of the full-round-bottomed slots on either side of each leg.
+  # Recommended: 0.6.
+  leg_slot_width: 0.6
+
+  # Purpose: Radius from the cell centre that the ledge outer face reaches.
+  # Must stay below the groove wall at 13.2. The undercut it grips is
+  # ledge_reach - 12.5.
+  # Recommended: 12.95.
+  ledge_reach: 12.95
+
+  # Purpose: Lead-in angle of the ledge's lower face, from the insertion axis.
+  # Recommended: 45.0 for easy insertion and a printable overhang.
+  ledge_lead_in_angle: 45.0
+
+  # Purpose: Normal gap between the ledge and the lip ramp, and between the
+  # corner pads and the board corner chamfer, when the snap is flush.
+  # Recommended: 0.02 (FEA-tuned; the lip deforms before the ledge bears).
+  seat_clearance: 0.02
+
+multiconnect_blocking_screw:
+  # Purpose: Radial gap between the screw shank and the snap's leg bore. The
+  # shank is blocking_clearance smaller than the bore, so the legs can only move
+  # this far inward before the shank stops them.
+  # Recommended: 0.05 (FEA-tuned); larger values let the legs move further under load.
+  blocking_clearance: 0.05

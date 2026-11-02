@@ -12,6 +12,7 @@ Implemented:
 - Snap thread, snap body, and self-expanding snap primitives
 - Assembled snap products with bare, basic-thread, self-expanding, openConnect, or Multiconnect attachments
 - Snap-thread-backed openConnect and Multiconnect screws, openConnect heads, Multiconnect heads, and cosmetic text engraving
+- Blocking-pin snap and Multiconnect blocking screw for openGrid Heavy boards: the screw shank blocks the snap's legs from collapsing, so pull-out does not depend on thread tightness
 - Multiconnect profile, part-kind, rail, receiver, backer, and rail-delete-tool builders
 - STEP/STL export, OCP VS Code viewer example, and SVG verification galleries
 
@@ -99,6 +100,9 @@ output/verification/
   multiconnect_rail/gallery.html
   multiconnect_parts/gallery.html
   openconnect_screw/gallery.html
+  blocking_pin_snap/gallery.html
+  multiconnect_blocking_screw/gallery.html
+  blocking_pin_assembly/gallery.html
 ```
 
 Use `output/verification/<component>/gallery.html` for visual inspection after geometry-sensitive changes. To display the configured objects in OCP CAD Viewer, set `viewer.show: true` in the YAML and open the OCP CAD Viewer panel in VS Code before running the script.
@@ -136,6 +140,29 @@ snap = build_opengrid_snap(
 rail = build_multiconnect_part(MulticonnectConfig(length=56.0))
 ```
 
+### Blocking-pin snap and screw (Heavy boards)
+
+`build_blocking_pin_snap` and `build_multiconnect_blocking_screw` make a two-part lock for a 13.8 mm openGrid Heavy board. Push the snap into a cell until its top is flush with the board face: the four legs flex inward past the top lip and their ledges spring out under it. Then thread the screw into the snap hub until it stops. The screw shank fills the leg bore, so the legs cannot collapse inward under a pull. The thread only holds the screw in place and can be printed loose. Print the snap upright and the screw head-up (thread tip down).
+
+```python
+import build123d as bd
+
+from opengrid_build123 import (
+    BlockingPinSnapConfig,
+    MulticonnectBlockingScrewConfig,
+    build_blocking_pin_snap,
+    build_multiconnect_blocking_screw,
+)
+
+snap_config = BlockingPinSnapConfig()
+snap = build_blocking_pin_snap(snap_config)  # z = 0 at the deep end, top at snap_config.height
+screw = build_multiconnect_blocking_screw(MulticonnectBlockingScrewConfig(snap=snap_config))  # head face at z = 0
+
+seated_snap = snap.translate((0, 0, snap_config.board_thickness - snap_config.height))
+```
+
+`examples/main.py` writes `output/blocking_pin_snap.step`, `output/multiconnect_blocking_screw.step`, and a section view of the seated and locked assembly in a 1×1 Heavy board at `output/verification/blocking_pin_assembly/`.
+
 ## Verification
 
 ```bash
@@ -155,6 +182,7 @@ Current test coverage checks:
 - Complete-tile and large available-space fill placement
 - Snap thread, snap body, expanding snap, assembled snap, screw, engraving, and Multiconnect behavior
 - Reference-source parity checks for snap body, expanding snap, and Multiconnect source dimensions/envelopes
+- Blocking-pin snap fit in a Heavy board: flush seat, ledge and pad gaps, shank-to-bore blocking clearance, and collapse blocked by the shank
 - Variant SVG verification galleries and top-level verification index under `output/verification/`
 
 ## Project layout
